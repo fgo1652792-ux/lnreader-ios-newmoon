@@ -230,15 +230,49 @@ jobs:
           # The app is already installed + booted; terminate the manual launch
           # so the test runner starts it cleanly.
           xcrun simctl terminate "$SIM_NAME" "$BUNDLE_ID" 2>/dev/null || true
+
+          # AX warmup: a freshly booted simulator frequently times out the UI
+          # test runner with "Timed out waiting for AX loaded notification".
+          # Launching the app once and letting it settle initializes the
+          # accessibility subsystem before the runner attaches.
+          xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || true
+          sleep 25
+          xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" 2>/dev/null || true
+          sleep 5
+
           cd e2e
-          xcodebuild test \
-            -project LNReaderUITests.xcodeproj \
-            -scheme LNReaderUITests \
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \
-            -derivedDataPath ../build-e2e \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            2>&1 | tee ../xcodebuild-e2e.log | xcbeautify --renderer github-actions
+          ATTEMPT=1
+          while [ "$ATTEMPT" -le 3 ]; do
+            echo "=== UI test attempt $ATTEMPT ==="
+            set +e
+            xcodebuild test \
+              -project LNReaderUITests.xcodeproj \
+              -scheme LNReaderUITests \
+              -destination "platform=iOS Simulator,id=$SIM_UDID" \
+              -derivedDataPath ../build-e2e \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              2>&1 | tee ../xcodebuild-e2e.log | xcbeautify --renderer github-actions
+            RC=${PIPESTATUS[0]}
+            set -e
+            if [ "$RC" -eq 0 ]; then
+              echo "UI tests passed on attempt $ATTEMPT"
+              exit 0
+            fi
+            if grep -q "Timed out waiting for AX" ../xcodebuild-e2e.log; then
+              echo "::warning::AX init timeout (attempt $ATTEMPT) — warming up and retrying"
+              xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || true
+              sleep 30
+              xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" 2>/dev/null || true
+              sleep 5
+              ATTEMPT=$((ATTEMPT+1))
+            else
+              echo "Real test failure (not AX init) — no retry"
+              exit 1
+            fi
+          done
+          echo "::error::UI tests failed after 3 attempts"
+          exit 1
 
       - name: Collect UI test screenshots
         if: always()
