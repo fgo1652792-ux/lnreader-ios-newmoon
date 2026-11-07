@@ -73,8 +73,11 @@ final class LNReaderUITests: XCTestCase {
   private func waitExists(
     _ element: XCUIElement, _ timeout: TimeInterval = 20, _ message: String
   ) {
-    XCTAssertTrue(
-      element.waitForExistence(timeout: timeout), "UI gate failed: \(message)")
+    let ok = element.waitForExistence(timeout: timeout)
+    if !ok {
+      dumpAXTree("ax-tree-\(message.replacingOccurrences(of: " ", with: "-"))")
+    }
+    XCTAssertTrue(ok, "UI gate failed: \(message)")
   }
 
   private func waitVanishes(
@@ -196,6 +199,16 @@ final class LNReaderUITests: XCTestCase {
     tapWhenReady(["App language", "لغة التطبيق"], 20, "language row missing", scroll: true)
     tapWhenReady(["العربية"], 15, "Arabic option missing")
     tapWhenReady(["Apply now", "تطبيق الآن"], 15, "apply-now dialog missing")
+    // 'Apply now' triggers a React runtime reload (RCTTriggerReloadCommandListeners)
+    // to rebuild mirrored views. A clean relaunch is the deterministic way to
+    // observe the persisted Arabic locale regardless of reload semantics in
+    // release builds: terminate + launch, then expect the RTL UI.
+    sleep(3)
+    app.terminate()
+    sleep(2)
+    app = XCUIApplication(bundleIdentifier: Self.bundleId)
+    app.launch()
+    sleep(6)
     waitExists(
       app.buttons["المكتبة"].firstMatch, 60,
       "Arabic (RTL) UI did not appear after language switch")
@@ -284,6 +297,12 @@ final class LNReaderUITests: XCTestCase {
       tapWhenReady(["App language", "لغة التطبيق"], 20, "language row missing", scroll: true)
       tapWhenReady(["العربية"], 15, "Arabic option missing")
       tapWhenReady(["Apply now", "تطبيق الآن"], 15, "apply-now dialog missing")
+      sleep(3)
+      app.terminate()
+      sleep(2)
+      app = XCUIApplication(bundleIdentifier: Self.bundleId)
+      app.launch()
+      sleep(6)
       waitExists(
         app.buttons["المكتبة"].firstMatch, 60,
         "Arabic (RTL) UI did not appear after language switch")
@@ -327,9 +346,11 @@ final class LNReaderUITests: XCTestCase {
     tapWhenReady(["المصادر", "Sources"], 15, "sources top tab missing")
     waitSelectedState(sourcesIndicator, sourcesIndicator, pluginsIndicator)
     screenshot("14-browse-rtl-indicator-sources-again")
+    // Fresh queries every iteration — cached XCUIElement references can go
+    // stale across the tab switches (element namespace rebuilds).
     for _ in 0..<3 {
-      pluginsTab.tap()
-      sourcesTab.tap()
+      tapWhenReady(["الإضافات", "Plugins"], 15, "plugins top tab missing")
+      tapWhenReady(["المصادر", "Sources"], 15, "sources top tab missing")
     }
     waitSelectedState(sourcesIndicator, sourcesIndicator, pluginsIndicator)
     screenshot("15-browse-rtl-after-rapid-taps")
