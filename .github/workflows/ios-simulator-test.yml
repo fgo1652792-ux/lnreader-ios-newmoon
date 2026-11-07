@@ -29,7 +29,7 @@ env:
   CI: 'true'
   EXPO_NO_TELEMETRY: '1'
   BUNDLE_ID: com.rajarsheechatterjee.LNReader
-  SIM_NAME: lnreader-test-ipad
+  SIM_NAME: lnreader-test-device
 
 jobs:
   await-ipa:
@@ -53,7 +53,7 @@ jobs:
         run: echo "Manual run on ${{ github.ref_name }} — upstream gate not applicable"
 
   simulator-test:
-    name: iPad 7th gen · iOS 18.5 · interaction tests
+    name: Simulator (light iPhone, iPad fallback) · interaction tests
     needs: await-ipa
     runs-on: macos-26
     timeout-minutes: 150
@@ -162,9 +162,16 @@ jobs:
           test -f "$APP/ReaderAssets/fonts/lato.ttf" || { echo "MISSING fonts"; exit 1; }
           echo "ReaderAssets present in simulator app bundle ✓"
 
-      - name: Create + boot iPad (7th generation) on newest iOS runtime
+      - name: Create + boot simulator (light iPhone first, iPad fallback)
         run: |
           set -x
+          # Per the product decision: a LIGHT iPHONE simulator that actually
+          # works beats a heavyweight iPad that wedges — the runner-class AX
+          # gate ("bottom tabs did not render" while pixels render fine) has
+          # reproduced 3x on the iPad sim (cross-verified on an unrelated
+          # branch at the same minute). The user-facing requirement is REAL
+          # interaction testing; device fidelity to iPad 7th gen is enforced
+          # by the IPA pipeline (MinOS <= 18.5 + arm64), not by the sim skin.
           # Prefer the exact target runtime (18.5), then any 18.x. NOTE: the
           # macos-26 runner image no longer ships iOS 18.x runtimes (only
           # 26.1-26.5 — see run #15 logs), so launch testing falls back to
@@ -195,15 +202,24 @@ jobs:
           # The identifier token in `simctl list devicetypes` output is
           # "SimDeviceType" (run #19 confirmed SimDeviceInfoType never
           # matches — result was an empty DEVICE_TYPE).
-          DEVICE_TYPE=$(xcrun simctl list devicetypes | grep 'iPad (7th generation)' | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+' | head -1 || true)
-          if [ -z "$DEVICE_TYPE" ]; then
-            # Newer runtimes may drop the A10-era device type — any iPad
-            # satisfies the launch/stability smoke test; the actually used
-            # device+runtime pair is recorded in SIM_RUNTIME_USED.
-            DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -E '\(com\.apple\.CoreSimulator\.SimDeviceType\.iPad' | head -1 | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+' || true)
-          fi
+          # Light-device ladder (per the product decision): small iPhones are
+          # the fastest to boot and the most AX-reliable on this runner class.
+          DEVICE_TYPE=""
+          for CANDIDATE in \
+            'iPhone SE (3rd generation)' \
+            'iPhone 13 mini' \
+            'iPhone 16e' \
+            'iPad (7th generation)' \
+            'iPad'; do
+            FOUND=$(xcrun simctl list devicetypes | grep -F "$CANDIDATE (" | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+' | head -1 || true)
+            if [ -n "$FOUND" ]; then
+              DEVICE_TYPE="$FOUND"
+              echo "Selected device: $CANDIDATE -> $DEVICE_TYPE"
+              break
+            fi
+          done
           echo "Device type: $DEVICE_TYPE"
-          test -n "$DEVICE_TYPE" || { echo "::error::no iPad devicetype found"; exit 1; }
+          test -n "$DEVICE_TYPE" || { echo "::error::no usable devicetype found"; exit 1; }
 
           xcrun simctl create "$SIM_NAME" "$DEVICE_TYPE" "$RUNTIME"
           echo "SIM_RUNTIME_USED=$RUNTIME" >> "$GITHUB_ENV"
