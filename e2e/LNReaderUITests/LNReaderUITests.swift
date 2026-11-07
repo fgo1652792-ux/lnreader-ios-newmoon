@@ -90,14 +90,19 @@ final class LNReaderUITests: XCTestCase {
 
   /// Finds the first tappable element matching any of the labels
   /// (English / Arabic pairs keep the suite resilient across restarts).
+  /// The fallback uses CONTAINS: RN List.Item aggregates title+description
+  /// into one AX label ("App language, Default"), so exact equality misses.
   private func tappable(_ labels: [String]) -> XCUIElement? {
     for label in labels {
       let button = app.buttons[label].firstMatch
       if button.exists && button.isHittable { return button }
     }
     for label in labels {
+      let pred = NSPredicate(
+        format: "label == %@ OR label BEGINSWITH %@ OR label CONTAINS %@",
+        label, label + ",", label + ",")
       let any = app.descendants(matching: .any)
-        .matching(NSPredicate(format: "label == %@", label)).firstMatch
+        .matching(pred).firstMatch
       if any.exists { return any }
     }
     return nil
