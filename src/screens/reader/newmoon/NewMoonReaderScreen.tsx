@@ -50,6 +50,7 @@ import { switchNovelToLibraryQuery } from '@database/queries/NovelQueries';
 import { IconButtonV2 } from '@components';
 import { fetchChapter } from '@services/plugin/fetch';
 import { sanitizeChapterText } from '../utils/sanitizeChapterText';
+import KeepScreenAwake from '../components/KeepScreenAwake';
 import type { ChapterInfo, NovelInfo } from '@database/types';
 
 import buildWorShell from '../../../reader/newmoon/worShell';
@@ -202,6 +203,10 @@ const NewMoonReaderScreen = ({
   const [, setIsFavorite] = useState(!!novel.inLibrary);
   const [chapterTitle, setChapterTitle] = useState(initialChapter.name);
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  /** Mirrors the engine's keepAwake switch → native wake lock. */
+  const [keepAwake, setKeepAwake] = useState(
+    initialSettings.keepAwake === true,
+  );
 
   const shellTheme = useMemo(() => {
     const light = isLightColor(initialSettings.bgColor);
@@ -851,6 +856,9 @@ const NewMoonReaderScreen = ({
     } as WorReaderSettings;
     saveWorSettingsPatch(patch);
     bridgeRef.current.post({ kind: 'settings', settings: patch });
+    if (typeof patch.keepAwake === 'boolean') {
+      setKeepAwake(patch.keepAwake);
+    }
     if (needsRebuild) {
       rebuildCurrentRef.current();
     }
@@ -1167,6 +1175,9 @@ const NewMoonReaderScreen = ({
         allowFileAccess
         onMessage={handleOnMessage}
       />
+
+      {/* Engine 'keepAwake' switch → native wake lock (same as classic). */}
+      {keepAwake ? <KeepScreenAwake /> : null}
 
       {loading ? (
         <View
