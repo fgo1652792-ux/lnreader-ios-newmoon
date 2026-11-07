@@ -659,6 +659,10 @@ export interface StringMap {
   'readerSettings.tabTheme': 'string';
   'readerSettings.tabNavigation': 'string';
   'readerSettings.tabAccessibility': 'string';
+  'readerSettings.engine': 'string';
+  'readerSettings.engineDescription': 'string';
+  'readerSettings.engineNewMoon': 'string';
+  'readerSettings.engineClassic': 'string';
   'sourceScreen.noResultsFound': 'string';
   'statsScreen.downloadedChapters': 'string';
   'statsScreen.genreDistribution': 'string';
@@ -832,4 +836,18 @@ export interface StringMap {
   'colorPicker.contrastLowWarning': 'string';
   'colorPicker.contrastGood': 'string';
   'colorPicker.readerPresets': 'string';
+  'newMoon.chapterLoadFailed': 'string';
+  'newMoon.favoriteFailed': 'string';
+  'newMoon.loadingNext': 'string';
+  'newMoon.noNextChapter': 'string';
+  'newMoon.noPreviousChapter': 'string';
+  'newMoon.novelDetails': 'string';
+  'newMoon.ttsPlay': 'string';
+  'newMoon.ttsStop': 'string';
+  'newMoon.wordAdded': 'string';
+  'newMoon.wordDeleted': 'string';
+  'newMoon.wordNotFound': 'string';
+  'newMoon.wordRequired': 'string';
+  'newMoon.wordUpdated': 'string';
+  'newMoon.wordsCleared': 'string';
 }

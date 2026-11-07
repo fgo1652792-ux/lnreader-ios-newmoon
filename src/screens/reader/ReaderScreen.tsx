@@ -32,15 +32,26 @@ import { Drawer } from 'react-native-drawer-layout';
 import { EMPTY_READER_SEARCH_RESULT, ReaderSearchResult } from './types';
 import * as Linking from 'expo-linking';
 import { resolveUrl } from '@services/plugin/fetch';
+import { getReaderEngine } from './newmoon/engineSetting';
+import NewMoonReaderScreen from './newmoon/NewMoonReaderScreen';
 
-const Chapter = ({ route, navigation }: ChapterScreenProps) => (
-  <ChapterContextProvider
-    novel={route.params.novel}
-    initialChapter={route.params.chapter}
-  >
-    <ReaderDrawerLayout route={route} navigation={navigation} />
-  </ChapterContextProvider>
-);
+const Chapter = ({ route, navigation }: ChapterScreenProps) => {
+  // Reader-engine switch (Settings → Reader → «محرك القارئ»). 'wor' renders
+  // the New-moon engine (self-contained shell in its own WebView); 'classic'
+  // renders the original reader below. Read synchronously per mount so the
+  // switch applies the next time a chapter screen is opened.
+  if (getReaderEngine() === 'wor') {
+    return <NewMoonReaderScreen route={route} />;
+  }
+  return (
+    <ChapterContextProvider
+      novel={route.params.novel}
+      initialChapter={route.params.chapter}
+    >
+      <ReaderDrawerLayout route={route} navigation={navigation} />
+    </ChapterContextProvider>
+  );
+};
 
 const ReaderDrawerLayout = ({ route, navigation }: ChapterScreenProps) => {
   const theme = useTheme();

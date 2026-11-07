@@ -767,7 +767,11 @@
     "tabDisplay": "العرض",
     "tabTheme": "السمة",
     "tabNavigation": "التنقل",
-    "tabAccessibility": "إمكانية الوصول"
+    "tabAccessibility": "إمكانية الوصول",
+    "engine": "محرك القارئ",
+    "engineDescription": "اختر محرك القراءة. يُطبَّق التغيير عند فتح الفصل التالي.",
+    "engineNewMoon": "نيو مون",
+    "engineClassic": "كلاسيكي"
   },
   "sourceScreen": {
     "noResultsFound": "لم يتم العثور على أي نتائج"
@@ -985,5 +989,21 @@
     "contrastLowWarning": "تباين منخفض — قد يصعب قراءة النص",
     "contrastGood": "تباين مريح للقراءة",
     "readerPresets": "ألوان جاهزة للقراءة"
+  },
+  "newMoon": {
+    "chapterLoadFailed": "فشل تحميل الفصل: %{message}",
+    "favoriteFailed": "فشلت العملية",
+    "loadingNext": "جاري تحميل الفصل التالي…",
+    "noNextChapter": "أنت في آخر فصل متاح",
+    "noPreviousChapter": "أنت في أول فصل متاح",
+    "novelDetails": "الرجوع إلى الرواية",
+    "ttsPlay": "تشغيل القراءة الصوتية",
+    "ttsStop": "إيقاف القراءة الصوتية",
+    "wordAdded": "تمت إضافة الكلمة",
+    "wordDeleted": "تم حذف الكلمة",
+    "wordNotFound": "لم يتم العثور على الكلمة",
+    "wordRequired": "اكتب الكلمة الأصلية أولاً",
+    "wordUpdated": "تم تحديث الكلمة",
+    "wordsCleared": "تم مسح الكلمات"
   }
 }

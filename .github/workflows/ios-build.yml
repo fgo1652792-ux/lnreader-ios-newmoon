@@ -12,6 +12,7 @@ on:
   push:
     branches:
       - ios-port
+      - fix/ios-rtl-newmoon-reader-port
     paths-ignore:
       - 'docs/**'
       - '**.md'

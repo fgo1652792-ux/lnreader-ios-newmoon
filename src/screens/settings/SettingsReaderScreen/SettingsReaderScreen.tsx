@@ -17,6 +17,7 @@ import { getString } from '@i18n/translations';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import SettingsReaderWebView from './components/SettingsReaderWebView';
+import EngineSelector from './components/EngineSelector';
 import DisplayTab from './tabs/DisplayTab';
 import ThemeTab from './tabs/ThemeTab';
 import NavigationTab from './tabs/NavigationTab';
@@ -143,6 +144,9 @@ const SettingsReaderScreen = () => {
         handleGoBack={navigation.goBack}
         theme={theme}
       />
+
+      {/* Reader-engine switch (New-moon ⟷ Classic) — applies next chapter open */}
+      <EngineSelector />
 
       {/* Large Preview Area */}
       <View style={styles.previewContainer}>

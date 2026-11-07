@@ -767,7 +767,11 @@
     "tabDisplay": "Display",
     "tabTheme": "Theme",
     "tabNavigation": "Navigation",
-    "tabAccessibility": "Accessibility"
+    "tabAccessibility": "Accessibility",
+    "engine": "Reader engine",
+    "engineDescription": "Choose the reading engine. The change applies the next time you open a chapter.",
+    "engineNewMoon": "New-moon",
+    "engineClassic": "Classic"
   },
   "sourceScreen": {
     "noResultsFound": "No results found"
@@ -985,5 +989,21 @@
     "contrastLowWarning": "Low contrast — text may be hard to read",
     "contrastGood": "Readable contrast",
     "readerPresets": "Reading presets"
+  },
+  "newMoon": {
+    "chapterLoadFailed": "Failed to load chapter: %{message}",
+    "favoriteFailed": "Action failed",
+    "loadingNext": "Loading next chapter…",
+    "noNextChapter": "You are at the last available chapter",
+    "noPreviousChapter": "You are at the first available chapter",
+    "novelDetails": "Back to the novel",
+    "ttsPlay": "Read aloud",
+    "ttsStop": "Stop reading",
+    "wordAdded": "Word added",
+    "wordDeleted": "Word deleted",
+    "wordNotFound": "Word not found",
+    "wordRequired": "Type the original word first",
+    "wordUpdated": "Word updated",
+    "wordsCleared": "Words cleared"
   }
 }
