@@ -1152,5 +1152,142 @@
     "settingsCustomOpenMark": "علامة البداية",
     "settingsCustomCloseMark": "علامة النهاية",
     "settingsStyleAll": "الكل"
+  },
+  "themeStudio": {
+    "title": "تخصيص المظهر",
+    "entryDescription": "اضبط كل ألوان التصميم بدقة، لكل من الوضع الفاتح والداكن",
+    "subtitle": "خصّص لوحة ألوان التطبيق فوق الثيم الحالي",
+    "tabs": {
+      "light": "فاتح",
+      "dark": "داكن"
+    },
+    "editingOnTopOf": "تعديل فوق: %{name}",
+    "preview": {
+      "title": "معاينة مباشرة"
+    },
+    "groups": {
+      "surfaces": "الخلفيات والأسطح",
+      "primary": "الأساسي (الأزرار)",
+      "secondary": "الثانوي",
+      "tertiary": "الثالثي",
+      "error": "الخطأ",
+      "outlines": "الحدود والفواصل والعناصر المعطّلة",
+      "inverse": "الأسطح المعكوسة والطبقات",
+      "advanced": "متقدم"
+    },
+    "tokens": {
+      "background": "الخلفية",
+      "onBackground": "نص الخلفية",
+      "surface": "السطح",
+      "onSurface": "نص السطح",
+      "surfaceVariant": "السطح البديل",
+      "onSurfaceVariant": "النص والأيقونات الباهتة",
+      "surfaceContainerLow": "حاوية سطح منخفضة",
+      "surfaceContainerHigh": "حاوية سطح مرتفعة",
+      "primary": "اللون الأساسي (الأزرار)",
+      "onPrimary": "نص على الأساسي",
+      "primaryContainer": "حاوية الأساسي",
+      "onPrimaryContainer": "نص على حاوية الأساسي",
+      "secondary": "الثانوي",
+      "onSecondary": "نص على الثانوي",
+      "secondaryContainer": "حاوية الثانوي",
+      "onSecondaryContainer": "نص على حاوية الثانوي",
+      "tertiary": "الثالثي",
+      "onTertiary": "نص على الثالثي",
+      "tertiaryContainer": "حاوية الثالثي",
+      "onTertiaryContainer": "نص على حاوية الثالثي",
+      "error": "الخطأ",
+      "onError": "نص على الخطأ",
+      "errorContainer": "حاوية الخطأ",
+      "onErrorContainer": "نص على حاوية الخطأ",
+      "outline": "حدود الإدخال والإطارات",
+      "outlineVariant": "الفواصل",
+      "surfaceDisabled": "سطح العناصر المعطّلة",
+      "onSurfaceDisabled": "نص العناصر المعطّلة",
+      "inverseSurface": "السطح المعكوس",
+      "inverseOnSurface": "نص على السطح المعكوس",
+      "inversePrimary": "الأساسي المعكوس",
+      "backdrop": "خلفية الطبقات",
+      "scrim": "ستارة التعتيم",
+      "shadow": "الظل",
+      "surface2": "سطح الارتفاع ٢",
+      "overlay3": "طبقة الارتفاع ٣",
+      "rippleColor": "لون التموج",
+      "surfaceReader": "سطح القارئ"
+    },
+    "presets": {
+      "title": "الأنماط الجاهزة",
+      "off": "بلا (ثيم التطبيق)",
+      "default": "الافتراضي",
+      "sepia": "سيبيا",
+      "midnight": "منتصف الليل",
+      "rose": "وردي",
+      "forest": "الغابة",
+      "active": "مطبَّق"
+    },
+    "userThemes": {
+      "title": "ثيماتك",
+      "empty": "لا توجد ثيمات محفوظة بعد — عدّل الألوان ثم اضغط «حفظ الثيم».",
+      "rename": "إعادة تسمية",
+      "renameTitle": "إعادة تسمية الثيم",
+      "duplicate": "مضاعفة",
+      "copySuffix": "نسخة",
+      "deleteTitle": "حذف الثيم",
+      "deleteMessage": "سيُحذف الثيم «%{name}» نهائيًا."
+    },
+    "actions": {
+      "save": "حفظ الثيم",
+      "export": "تصدير (نسخ JSON)",
+      "import": "استيراد (لصق JSON)",
+      "resetMode": "إعادة ضبط هذا الوضع",
+      "resetAll": "إعادة ضبط الكل",
+      "overriddenBadge": "معدَّل"
+    },
+    "saveModal": {
+      "title": "حفظ الثيم",
+      "nameLabel": "اسم الثيم",
+      "hint": "يحفظ تعديلات الوضعين الفاتح والداكن كثيم واحد."
+    },
+    "importModal": {
+      "title": "استيراد ثيم",
+      "placeholder": "الصق ثيم JSON هنا",
+      "errorEmpty": "الصق ثيم JSON أولاً",
+      "errorInvalidJson": "JSON غير صالح",
+      "errorUnknownFormat": "هذا الملف ليس تصديرًا من استوديو المظهر",
+      "errorUnsupportedVersion": "إصدار الثيم غير مدعوم",
+      "submit": "استيراد"
+    },
+    "export": {
+      "copied": "تم نسخ ثيم JSON إلى الحافظة",
+      "failed": "تعذّر نسخ ثيم JSON"
+    },
+    "imported": {
+      "success": "تم استيراد «%{name}»"
+    },
+    "savedToast": "تم حفظ الثيم «%{name}»",
+    "deletedToast": "تم حذف الثيم «%{name}»",
+    "resetToast": "تمت إعادة ضبط تعديلات الثيم",
+    "unsaved": {
+      "banner": "تغييرات غير محفوظة — احفظ الثيم لتطبيقها",
+      "saveNow": "احفظ الآن"
+    },
+    "contrast": {
+      "title": "فحص التباين",
+      "allGood": "جميع الأزواج المفحوصة تطابق WCAG AA",
+      "lowText": "تحذير: تباين منخفض للنص العادي",
+      "lowIcon": "تحذير: تباين منخفض للأيقونات",
+      "needs": "يتطلب %{min}:1",
+      "pair": "%{fg} على %{bg}"
+    },
+    "colorEditor": {
+      "title": "تعديل %{token}",
+      "hexLabel": "لون HEX",
+      "hueLabel": "درجة اللون",
+      "current": "الحالي",
+      "new": "الجديد",
+      "useDefault": "استخدام افتراضي التطبيق",
+      "contrastPasses": "التباين %{ratio} — مطابق",
+      "contrastFails": "التباين %{ratio} — منخفض جدًا"
+    }
   }
 }

@@ -1152,5 +1152,142 @@
     "settingsCustomOpenMark": "Opening mark",
     "settingsCustomCloseMark": "Closing mark",
     "settingsStyleAll": "All"
+  },
+  "themeStudio": {
+    "title": "Theme studio",
+    "entryDescription": "Fine-tune every MD3 color, per light & dark mode",
+    "subtitle": "Customize the app palette on top of the current theme",
+    "tabs": {
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "editingOnTopOf": "Editing on top of: %{name}",
+    "preview": {
+      "title": "Live preview"
+    },
+    "groups": {
+      "surfaces": "Backgrounds & surfaces",
+      "primary": "Primary (buttons)",
+      "secondary": "Secondary",
+      "tertiary": "Tertiary",
+      "error": "Error",
+      "outlines": "Borders, dividers & disabled",
+      "inverse": "Inverse surfaces & overlays",
+      "advanced": "Advanced"
+    },
+    "tokens": {
+      "background": "Background",
+      "onBackground": "Text on background",
+      "surface": "Surface",
+      "onSurface": "Text on surface",
+      "surfaceVariant": "Surface variant",
+      "onSurfaceVariant": "Muted text & icons",
+      "surfaceContainerLow": "Surface container low",
+      "surfaceContainerHigh": "Surface container high",
+      "primary": "Primary (buttons)",
+      "onPrimary": "Text on primary",
+      "primaryContainer": "Primary container",
+      "onPrimaryContainer": "Text on primary container",
+      "secondary": "Secondary",
+      "onSecondary": "Text on secondary",
+      "secondaryContainer": "Secondary container",
+      "onSecondaryContainer": "Text on secondary container",
+      "tertiary": "Tertiary",
+      "onTertiary": "Text on tertiary",
+      "tertiaryContainer": "Tertiary container",
+      "onTertiaryContainer": "Text on tertiary container",
+      "error": "Error",
+      "onError": "Text on error",
+      "errorContainer": "Error container",
+      "onErrorContainer": "Text on error container",
+      "outline": "Border & input outline",
+      "outlineVariant": "Dividers",
+      "surfaceDisabled": "Disabled surface",
+      "onSurfaceDisabled": "Disabled text",
+      "inverseSurface": "Inverse surface",
+      "inverseOnSurface": "Text on inverse surface",
+      "inversePrimary": "Inverse primary",
+      "backdrop": "Backdrop",
+      "scrim": "Scrim",
+      "shadow": "Shadow",
+      "surface2": "Elevation surface 2",
+      "overlay3": "Elevation overlay 3",
+      "rippleColor": "Ripple",
+      "surfaceReader": "Reader surface"
+    },
+    "presets": {
+      "title": "Presets",
+      "off": "None (app theme)",
+      "default": "Default",
+      "sepia": "Sepia",
+      "midnight": "Midnight",
+      "rose": "Rose",
+      "forest": "Forest",
+      "active": "Active"
+    },
+    "userThemes": {
+      "title": "Your themes",
+      "empty": "No saved themes yet — tweak colors, then tap Save theme.",
+      "rename": "Rename",
+      "renameTitle": "Rename theme",
+      "duplicate": "Duplicate",
+      "copySuffix": "copy",
+      "deleteTitle": "Delete theme",
+      "deleteMessage": "“%{name}” will be removed permanently."
+    },
+    "actions": {
+      "save": "Save theme",
+      "export": "Export (copy JSON)",
+      "import": "Import (paste JSON)",
+      "resetMode": "Reset this mode",
+      "resetAll": "Reset everything",
+      "overriddenBadge": "edited"
+    },
+    "saveModal": {
+      "title": "Save theme",
+      "nameLabel": "Theme name",
+      "hint": "Saves your light and dark edits as one theme."
+    },
+    "importModal": {
+      "title": "Import theme",
+      "placeholder": "Paste theme JSON here",
+      "errorEmpty": "Paste a theme JSON first",
+      "errorInvalidJson": "Invalid JSON",
+      "errorUnknownFormat": "This is not a Theme Studio export",
+      "errorUnsupportedVersion": "Unsupported theme version",
+      "submit": "Import"
+    },
+    "export": {
+      "copied": "Theme JSON copied to clipboard",
+      "failed": "Could not copy the theme JSON"
+    },
+    "imported": {
+      "success": "Imported “%{name}”"
+    },
+    "savedToast": "Theme “%{name}” saved",
+    "deletedToast": "Theme “%{name}” deleted",
+    "resetToast": "Theme overrides reset",
+    "unsaved": {
+      "banner": "Unsaved changes — save the theme to apply them",
+      "saveNow": "Save now"
+    },
+    "contrast": {
+      "title": "Contrast check",
+      "allGood": "All checked pairs pass WCAG AA",
+      "lowText": "Warning: low contrast for normal text",
+      "lowIcon": "Warning: low contrast for icons",
+      "needs": "needs %{min}:1",
+      "pair": "%{fg} on %{bg}"
+    },
+    "colorEditor": {
+      "title": "Edit %{token}",
+      "hexLabel": "Hex color",
+      "hueLabel": "Hue",
+      "current": "Current",
+      "new": "New",
+      "useDefault": "Use app default",
+      "contrastPasses": "Contrast %{ratio} — passes",
+      "contrastFails": "Contrast %{ratio} — too low"
+    }
   }
 }

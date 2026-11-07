@@ -21,6 +21,7 @@ import GenreTaxonomyScreen from '@screens/settings/SettingsTaxonomyScreen/Settin
 import DataStorageScreen from '@screens/settings/SettingsDataStorage/SettingsDataStorageScreen';
 import DataStorageDownloadsScreen from '@screens/settings/SettingsDataStorage/DataStorageDownloadsScreen';
 import DataStorageCategoryScreen from '@screens/settings/SettingsDataStorage/DataStorageCategoryScreen';
+import ThemeStudio from '@screens/settings/SettingsThemeStudio/ThemeStudioScreen';
 import { MoreStackParamList, SettingsStackParamList } from './types';
 import { useTheme } from '@hooks/persisted';
 
@@ -52,7 +53,7 @@ const SettingsStack = () => {
         component={RespositorySettings}
       />
       <Stack.Screen name="LibrarySettings" component={LibrarySettings} />
-<Stack.Screen name="CustomCode" component={SettingsCustomCode} />
+      <Stack.Screen name="CustomCode" component={SettingsCustomCode} />
       <Stack.Screen name="CodeSnippets" component={CodeSnippetsScreen} />
       <Stack.Screen name="GenreTaxonomy" component={GenreTaxonomyScreen} />
       <Stack.Screen name="DataStorage" component={DataStorageScreen} />
@@ -64,6 +65,7 @@ const SettingsStack = () => {
         name="DataStorageCategory"
         component={DataStorageCategoryScreen}
       />
+      <Stack.Screen name="ThemeStudio" component={ThemeStudio} />
     </Stack.Navigator>
   );
 };

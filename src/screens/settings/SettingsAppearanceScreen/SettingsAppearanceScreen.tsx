@@ -224,6 +224,14 @@ const AppearanceSettings = ({ navigation }: AppearanceSettingsScreenProps) => {
               theme={theme}
             />
           )}
+          <List.Item
+            title={getString('themeStudio.title')}
+            description={getString('themeStudio.entryDescription')}
+            icon="palette-outline"
+            onPress={() => navigation.navigate('ThemeStudio')}
+            theme={theme}
+            right="chevron-right"
+          />
           <List.SubHeader theme={theme}>
             {getString('common.display')}
           </List.SubHeader>

@@ -90,6 +90,7 @@ export type SettingsStackParamList = {
   DataStorage: undefined;
   DataStorageDownloads: undefined;
   DataStorageCategory: { categoryId: StorageCategoryId };
+  ThemeStudio: undefined;
 };
 
 export type NovelScreenProps = NativeStackScreenProps<
@@ -222,6 +223,11 @@ export type DataStorageDownloadsScreenProps = NativeStackScreenProps<
 export type DataStorageCategoryScreenProps = NativeStackScreenProps<
   SettingsStackParamList,
   'DataStorageCategory'
+>;
+
+export type ThemeStudioScreenProps = NativeStackScreenProps<
+  SettingsStackParamList,
+  'ThemeStudio'
 >;
 
 declare global {

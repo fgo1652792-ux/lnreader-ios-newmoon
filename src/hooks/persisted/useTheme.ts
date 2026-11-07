@@ -25,6 +25,15 @@ import {
   isDynamicThemeAvailable,
   toDynamicThemeColors,
 } from '@theme/dynamic';
+import {
+  mergeThemeOverrides,
+  resolveStudioBundle,
+} from '@theme/studio/overrides';
+import type { ThemeOverrides } from '@theme/studio/tokens';
+import {
+  THEME_STUDIO_ACTIVE_KEY,
+  THEME_STUDIO_THEMES_KEY,
+} from '@theme/studio/storage';
 
 const getElevationColor = (colors: ThemeColors, elevation: number): string => {
   return Color(colors.surface)
@@ -130,26 +139,46 @@ function transformThemeId(themeId: number, isDark: boolean): number {
   return lightIdMap[themeId] ?? themeId;
 }
 
-const getBaseTheme = (
-  themeMode: string,
-  themeId: number | undefined,
-  systemColorScheme: ColorSchemeName,
-  dynamicTheme: Material3Theme,
+export interface ThemeBuildInput {
+  themeMode: string;
+  themeId: number | undefined;
+  dynamicTheme: Material3Theme;
+  isAmoledBlack: boolean;
+  customAccent: string | undefined;
+}
+
+/**
+ * Computes the final `ThemeColors` for one light/dark mode.
+ *
+ * Pipeline (unchanged order, Theme Studio merged in before computed colors so
+ * derived colors like `surfaceContainerLow` stay consistent with overridden
+ * surfaces):
+ *   base scheme → AMOLED black → custom accent → studio overrides → computed
+ *
+ * `isDark` is an explicit argument (not derived from `themeMode`) so Theme
+ * Studio can build both modes' bases without forking the theme system.
+ */
+export const buildThemeColors = (
+  input: ThemeBuildInput,
+  isDark: boolean,
+  studioBundle: ThemeOverrides | undefined,
 ): ThemeColors => {
-  const isDark =
-    themeMode === 'system'
-      ? systemColorScheme === 'dark'
-      : themeMode === 'dark';
-
-  if (themeId === DYNAMIC_THEME_ID && isDynamicThemeAvailable) {
-    return toDynamicThemeColors(dynamicTheme, isDark);
+  let baseTheme: ThemeColors;
+  if (input.themeId === DYNAMIC_THEME_ID && isDynamicThemeAvailable) {
+    baseTheme = toDynamicThemeColors(input.dynamicTheme, isDark);
+  } else {
+    baseTheme = findThemeById(input.themeId, isDark);
   }
 
-  if (themeMode === 'system') {
-    return findThemeById(themeId, isDark);
-  }
+  const withAmoled = applyAmoledBlack(baseTheme, input.isAmoledBlack);
+  const withAccent = applyCustomAccent(withAmoled, input.customAccent);
+  const withStudio = mergeThemeOverrides(
+    withAccent,
+    studioBundle,
+    isDark ? 'dark' : 'light',
+  );
 
-  return findThemeById(themeId, isDark);
+  return addComputedColors(withStudio);
 };
 
 const ThemeContext = createContext<ThemeColors | null>(null);
@@ -159,6 +188,8 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
   const [themeMode = 'system'] = useMMKVString('THEME_MODE');
   const [isAmoledBlack = false] = useMMKVBoolean('AMOLED_BLACK');
   const [customAccent] = useMMKVString('CUSTOM_ACCENT_COLOR');
+  const [studioActiveId] = useMMKVString(THEME_STUDIO_ACTIVE_KEY);
+  const [studioThemesRaw] = useMMKVString(THEME_STUDIO_THEMES_KEY);
 
   const [systemColorScheme, setSystemColorScheme] = useState<ColorSchemeName>(
     Appearance.getColorScheme() ?? 'unspecified',
@@ -183,26 +214,39 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
     };
   }, []);
 
-  const theme = useMemo<ThemeColors>(() => {
-    const baseTheme = getBaseTheme(
-      themeMode,
-      themeId,
-      systemColorScheme,
-      dynamicTheme,
-    );
-    const withAmoled = applyAmoledBlack(baseTheme, isAmoledBlack);
-    const withAccent = applyCustomAccent(withAmoled, customAccent);
-    const finalTheme = addComputedColors(withAccent);
+  const studioBundle = useMemo<ThemeOverrides | undefined>(
+    () => resolveStudioBundle(studioActiveId, studioThemesRaw),
+    [studioActiveId, studioThemesRaw],
+  );
 
-    return finalTheme;
-  }, [
-    themeId,
-    themeMode,
-    systemColorScheme,
-    dynamicTheme,
-    isAmoledBlack,
-    customAccent,
-  ]);
+  const isDark =
+    themeMode === 'system'
+      ? systemColorScheme === 'dark'
+      : themeMode === 'dark';
+
+  const theme = useMemo<ThemeColors>(
+    () =>
+      buildThemeColors(
+        {
+          themeMode,
+          themeId,
+          dynamicTheme,
+          isAmoledBlack,
+          customAccent,
+        },
+        isDark,
+        studioBundle,
+      ),
+    [
+      themeId,
+      themeMode,
+      dynamicTheme,
+      isAmoledBlack,
+      customAccent,
+      studioBundle,
+      isDark,
+    ],
+  );
 
   return createElement(ThemeContext.Provider, { value: theme }, children);
 };
