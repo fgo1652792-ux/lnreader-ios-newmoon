@@ -86,6 +86,7 @@ export type SettingsStackParamList = {
   CustomCode: undefined;
   CodeSnippets: { snippetIndex: number; isJS: boolean } | undefined;
   GenreTaxonomy: undefined;
+  StorageSettings: undefined;
 };
 
 export type NovelScreenProps = NativeStackScreenProps<

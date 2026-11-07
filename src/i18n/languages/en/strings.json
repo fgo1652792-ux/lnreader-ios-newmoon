@@ -1040,5 +1040,40 @@
       "ttsPitch": "Voice pitch",
       "ttsHint": "Used by the speech button in the reader bar."
     }
+  },
+  "storage": {
+    "title": "Data & Storage",
+    "device": "Device space",
+    "used": "Used",
+    "free": "Free",
+    "total": "Total",
+    "appData": "App data (measurable)",
+    "breakdown": "Rebuildable data breakdown",
+    "files": "files",
+    "delete": "Delete",
+    "novelsSection": "Downloaded chapters by novel",
+    "deleteNovelChapters": "Delete downloaded chapters of this novel",
+    "noNovelData": "No downloaded chapters",
+    "orphans": "Orphan files without a matching novel: %{size} — cleaned automatically with library maintenance",
+    "disclaimer": "Sizes are measured from the app's actual files. System-managed data (installed app size, system caches) cannot be measured directly and is not shown. Library, progress, settings and cookies are NEVER deleted from this section.",
+    "measureFailed": "Failed to measure storage: %{message}",
+    "deleted": "Deleted — actually freed %{freed}",
+    "deletePartial": "Freed %{freed} with errors: %{errors}",
+    "deleteFailed": "Deletion failed: %{message}",
+    "novelDeleteIncomplete": "Chapters removed from the database but some files remain on disk — try again",
+    "confirmDeleteTitle": "Confirm deletion",
+    "confirmDeleteCategory": "This permanently deletes «%{name}» data (%{size}). It is rebuildable, but the actual deletion may take a while.",
+    "confirmDeleteNovel": "Delete ALL downloaded chapters of «%{name}» (%{size})? The novel stays in your library with its reading progress.",
+    "category": {
+      "downloads": "Downloaded chapters",
+      "plugins": "Plugin files",
+      "images": "Stored images (covers)",
+      "backups": "Temporary backups",
+      "webview": "Internal browser data (web cache)",
+      "crashLogs": "Crash & diagnostic logs",
+      "caches": "Cache",
+      "databases": "Databases (library & settings)",
+      "temp": "Temporary files"
+    }
   }
 }

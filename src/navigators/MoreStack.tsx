@@ -18,6 +18,7 @@ import RespositorySettings from '@screens/settings/SettingsRepositoryScreen/Sett
 import LibrarySettings from '@screens/settings/SettingsLibraryScreen/SettingsLibraryScreen';
 import StatsScreen from '@screens/StatsScreen/StatsScreen';
 import GenreTaxonomyScreen from '@screens/settings/SettingsTaxonomyScreen/SettingsTaxonomyScreen';
+import StorageSettings from '@screens/settings/SettingsStorageScreen';
 import { MoreStackParamList, SettingsStackParamList } from './types';
 import { useTheme } from '@hooks/persisted';
 
@@ -52,6 +53,7 @@ const SettingsStack = () => {
 <Stack.Screen name="CustomCode" component={SettingsCustomCode} />
       <Stack.Screen name="CodeSnippets" component={CodeSnippetsScreen} />
       <Stack.Screen name="GenreTaxonomy" component={GenreTaxonomyScreen} />
+      <Stack.Screen name="StorageSettings" component={StorageSettings} />
     </Stack.Navigator>
   );
 };

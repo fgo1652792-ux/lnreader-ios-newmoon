@@ -16,6 +16,30 @@ export type FileCopyResult = {
   size: number;
 };
 
+/** Recursive folder measurement (Data & Storage section). */
+export type DirectoryStats = {
+  path: string;
+  bytes: number;
+  files: number;
+  folders: number;
+  exists: boolean;
+};
+
+export type StorageCategoryStats = DirectoryStats;
+
+/** One-shot native storage report (all sizes in bytes). */
+export type StorageInfo = {
+  deviceTotalBytes: number;
+  deviceFreeBytes: number;
+  containerBytes: number;
+  categories: Record<string, StorageCategoryStats>;
+};
+
+export type DeleteDirectoryResult = {
+  deletedBytes: number;
+  errors: string[];
+};
+
 type NativeFileModule = {
   DocumentDirectoryPath: string;
   ExternalDirectoryPath: string;
@@ -47,6 +71,9 @@ type NativeFileModule = {
     headers: Record<string, string>,
     body?: string,
   ): Promise<void>;
+  getStorageInfo(): Promise<StorageInfo>;
+  getDirectoryStats(path: string): Promise<DirectoryStats>;
+  deleteDirectoryContents(path: string): Promise<DeleteDirectoryResult>;
 };
 
 export default requireNativeModule<NativeFileModule>('NativeFile');

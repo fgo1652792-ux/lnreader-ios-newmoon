@@ -197,6 +197,184 @@ public class NativeFileModule: Module {
     Constant("BundlePath") {
       Bundle.main.bundlePath
     }
+
+    // MARK: - App storage management (Data & Storage settings section)
+
+    /// Full storage overview in ONE native pass: device capacities plus the
+    /// recursive size of every measurable app-container category. Measuring
+    /// runs off the JS thread; each category is independent, so one unreadable
+    /// folder never fails the whole report (size 0 instead).
+    AsyncFunction("getStorageInfo") { (promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        promise.resolve(self.collectStorageInfo())
+      }
+    }
+
+    /// Recursive stats for one folder: bytes, file count, folder count.
+    /// Confined to the app container.
+    AsyncFunction("getDirectoryStats") { (path: String, promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        guard Self.isInsideContainer(path) else {
+          promise.reject("PATH_OUTSIDE_CONTAINER", "Refusing to measure outside the app container: \(path)")
+          return
+        }
+        let stats = Self.recursiveStats(at: path)
+        promise.resolve([
+          "path": path,
+          "bytes": stats.bytes,
+          "files": stats.files,
+          "folders": stats.folders,
+          "exists": stats.exists,
+        ])
+      }
+    }
+
+    /// Deletes the CONTENTS of a folder (the folder itself survives —
+    /// the app expects these paths to exist). Confined to the app container.
+    /// Returns { deletedBytes, errors: [String] } so the UI can report real
+    /// failures instead of fake success.
+    AsyncFunction("deleteDirectoryContents") { (path: String, promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        guard Self.isInsideContainer(path) else {
+          promise.reject("PATH_OUTSIDE_CONTAINER", "Refusing to delete outside the app container: \(path)")
+          return
+        }
+        let fileManager = FileManager.default
+        var deletedBytes: Int64 = 0
+        var errors: [String] = []
+        let statsBefore = Self.recursiveStats(at: path)
+        if let children = try? fileManager.contentsOfDirectory(atPath: path) {
+          for child in children {
+            let childPath = (path as NSString).appendingPathComponent(child)
+            let childStats = Self.recursiveStats(at: childPath)
+            do {
+              try fileManager.removeItem(atPath: childPath)
+              deletedBytes += childStats.bytes
+            } catch {
+              errors.append("\(child): \(error.localizedDescription)")
+            }
+          }
+        }
+        // Re-create the (now empty) folder so callers keep a valid path.
+        try? fileManager.createDirectory(atPath: path, withIntermediateDirectories: true)
+        _ = statsBefore
+        promise.resolve(["deletedBytes": deletedBytes, "errors": errors])
+      }
+    }
+  }
+
+  // MARK: - Storage helpers
+
+  /// True when `path` is inside THIS app's sandbox container. Every storage
+  /// management operation is gated on this — no arbitrary filesystem deletes.
+  static func isInsideContainer(_ path: String) -> Bool {
+    let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+    return standardized == NSHomeDirectory()
+      || standardized.hasPrefix(NSHomeDirectory() + "/")
+  }
+
+  private struct DirStats {
+    var bytes: Int64 = 0
+    var files: Int64 = 0
+    var folders: Int64 = 0
+    var exists: Bool = false
+  }
+
+  /// Iterative deep walk (no recursion on the call stack for 1000+-chapter
+  /// novel folders). Returns zero stats for missing paths.
+  private static func recursiveStats(at path: String) -> DirStats {
+    var result = DirStats()
+    let fileManager = FileManager.default
+    var isDirectory: ObjCBool = false
+    guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory) else {
+      return result
+    }
+    result.exists = true
+    if !isDirectory.boolValue {
+      result.files = 1
+      result.bytes = Self.fileSize(at: path)
+      return result
+    }
+    result.folders = 1
+    var stack: [String] = [path]
+    while let dir = stack.popLast() {
+      guard let children = try? fileManager.contentsOfDirectory(atPath: dir) else {
+        continue
+      }
+      for child in children {
+        let childPath = (dir as NSString).appendingPathComponent(child)
+        var childIsDir: ObjCBool = false
+        guard fileManager.fileExists(atPath: childPath, isDirectory: &childIsDir) else {
+          continue
+        }
+        if childIsDir.boolValue {
+          result.folders += 1
+          stack.append(childPath)
+        } else {
+          result.files += 1
+          result.bytes += Self.fileSize(at: childPath)
+        }
+      }
+    }
+    return result
+  }
+
+  private static func fileSize(at path: String) -> Int64 {
+    let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+    return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+  }
+
+  private func collectStorageInfo() -> [String: Any] {
+    let fileManager = FileManager.default
+    let home = NSHomeDirectory()
+
+    // Device capacities (whole volume — the app sandbox has no own quota).
+    var totalBytes: Int64 = 0
+    var freeBytes: Int64 = 0
+    if let url = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+      let values = try? url.resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityKey])
+      totalBytes = Int64(values?.volumeTotalCapacity ?? 0)
+      freeBytes = Int64(values?.volumeAvailableCapacity ?? 0)
+    }
+
+    let documents = (home as NSString).appendingPathComponent("Documents")
+    let library = (home as NSString).appendingPathComponent("Library")
+    let caches = (library as NSString).appendingPathComponent("Caches")
+    let tmp = NSTemporaryDirectory()
+
+    // Category paths (keep in sync with src/services/storage/storageService.ts)
+    let categories: [String: String] = [
+      "downloads": (documents as NSString).appendingPathComponent("Novels"),
+      "plugins": (documents as NSString).appendingPathComponent("Plugins"),
+      "caches": caches,
+      "backups": (caches as NSString).appendingPathComponent("BackupData"),
+      "webview": (library as NSString).appendingPathComponent("WebKit"),
+      "crashLogs": (library as NSString).appendingPathComponent("Logs"),
+      "databases": library,
+      "temp": tmp,
+    ]
+
+    var measured: [String: Any] = [:]
+    for (key, path) in categories {
+      let stats = Self.recursiveStats(at: path)
+      measured[key] = [
+        "path": path,
+        "bytes": stats.bytes,
+        "files": stats.files,
+        "folders": stats.folders,
+        "exists": stats.exists,
+      ]
+    }
+
+    // App container total (Documents + Library + tmp walked once).
+    let containerStats = Self.recursiveStats(at: home)
+
+    return [
+      "deviceTotalBytes": totalBytes,
+      "deviceFreeBytes": freeBytes,
+      "containerBytes": containerStats.bytes,
+      "categories": measured,
+    ]
   }
 
   // MARK: - Copy to directory

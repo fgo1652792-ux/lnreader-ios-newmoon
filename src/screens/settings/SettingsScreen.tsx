@@ -113,6 +113,16 @@ const SettingsScreen = ({ navigation }: SettingsScreenProps) => {
           }
           theme={theme}
         />
+        <List.Item
+          title={getString('storage.title')}
+          icon="database-outline"
+          onPress={() =>
+            navigation.navigate('SettingsStack', {
+              screen: 'StorageSettings',
+            })
+          }
+          theme={theme}
+        />
       </ScrollView>
     </SafeAreaView>
   );
