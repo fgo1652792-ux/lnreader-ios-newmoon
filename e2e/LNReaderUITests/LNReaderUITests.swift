@@ -115,7 +115,7 @@ final class LNReaderUITests: XCTestCase {
     }
 
     // 2) Bottom tabs render.
-    waitTappable(["More", "المزيد"], 40,
+    waitTappable(["More", "المزيد"], 120,
                  "bottom tabs did not render after launch")
     screenshot("02-library")
 
@@ -182,7 +182,7 @@ final class LNReaderUITests: XCTestCase {
       complete.tap()
       sleep(3)
     }
-    waitTappable(["More", "المزيد"], 40, "tabs did not render")
+    waitTappable(["More", "المزيد"], 120, "tabs did not render")
 
     // Rapid tab cycling + settings push/pop must not crash the app.
     for _ in 0..<3 {
@@ -216,7 +216,7 @@ final class LNReaderUITests: XCTestCase {
       complete.tap()
       sleep(3)
     }
-    waitTappable(["More", "المزيد"], 40, "bottom tabs did not render")
+    waitTappable(["More", "المزيد"], 120, "bottom tabs did not render")
 
     // Ensure the Arabic (RTL) UI, reusing the language-switch flow only when
     // a previous test has not already applied it.

@@ -234,9 +234,11 @@ jobs:
           # AX warmup: a freshly booted simulator frequently times out the UI
           # test runner with "Timed out waiting for AX loaded notification".
           # Launching the app once and letting it settle initializes the
-          # accessibility subsystem before the runner attaches.
+          # accessibility subsystem before the runner attaches. 45s covers
+          # the slow RN cold start observed on iPad 7th gen / iOS 18.5
+          # (rendering completes ~2min after first boot on busy runners).
           xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || true
-          sleep 25
+          sleep 45
           xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" 2>/dev/null || true
           sleep 5
 
@@ -263,6 +265,16 @@ jobs:
               echo "::warning::AX init timeout (attempt $ATTEMPT) — warming up and retrying"
               xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || true
               sleep 30
+              xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" 2>/dev/null || true
+              sleep 5
+              ATTEMPT=$((ATTEMPT+1))
+            elif grep -qE "(UI gate failed|did not render)" ../xcodebuild-e2e.log; then
+              # Rendered-but-AX-dead launch gate: the app UI is up (screenshot
+              # evidence) while the accessibility tree is still initializing
+              # on the slow iPad sim. Warm up longer and retry.
+              echo "::warning::launch-gate AX lag (attempt $ATTEMPT) — extended warmup + retry"
+              xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || true
+              sleep 60
               xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" 2>/dev/null || true
               sleep 5
               ATTEMPT=$((ATTEMPT+1))
