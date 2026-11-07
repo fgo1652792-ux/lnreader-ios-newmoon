@@ -29,7 +29,6 @@ import {
   applyOverrides,
   contrastRatio,
   deleteCustomThemePreset,
-  isHexColor,
   isReadablePair,
   listSavedCustomThemes,
   loadCustomOverrides,

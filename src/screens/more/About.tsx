@@ -44,6 +44,11 @@ const AboutScreen = ({ navigation }: AboutScreenProps) => {
       <ScrollView style={styles.flex}>
         <List.Section>
           <List.Item
+            title={getString('aboutScreen.appName')}
+            description={getString('aboutScreen.appDescription')}
+            theme={theme}
+          />
+          <List.Item
             title={getString('aboutScreen.version')}
             description={getBuildName()}
             theme={theme}
@@ -79,6 +84,19 @@ const AboutScreen = ({ navigation }: AboutScreenProps) => {
             onPress={() =>
               Linking.openURL('https://github.com/lnreader/lnreader')
             }
+            theme={theme}
+          />
+          <List.Item
+            title={getString('aboutScreen.moonProject')}
+            description="https://github.com/ZeUsx313/New-moon-2"
+            onPress={() =>
+              Linking.openURL('https://github.com/ZeUsx313/New-moon-2')
+            }
+            theme={theme}
+          />
+          <List.Item
+            title={getString('aboutScreen.legalNotice')}
+            description={getString('aboutScreen.legalNoticeText')}
             theme={theme}
           />
           <List.Item

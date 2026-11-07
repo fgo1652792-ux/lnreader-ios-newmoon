@@ -10,6 +10,11 @@ export interface StringMap {
   'aboutScreen.plugins': 'string';
   'aboutScreen.version': 'string';
   'aboutScreen.whatsNew': 'string';
+  'aboutScreen.appName': 'string';
+  'aboutScreen.appDescription': 'string';
+  'aboutScreen.moonProject': 'string';
+  'aboutScreen.legalNotice': 'string';
+  'aboutScreen.legalNoticeText': 'string';
   'advancedSettings': 'string';
   'advancedSettingsScreen.cachedNovelsDeletedToast': 'string';
   'advancedSettingsScreen.chapterInsertFailed': 'string';
@@ -325,6 +330,7 @@ export interface StringMap {
   'common.decrease': 'string';
   'common.invalidHexColor': 'string';
   'common.hexColorPlaceholder': 'string';
+  'common.restartRequired': 'string';
   'webview.refresh': 'string';
   'webview.share': 'string';
   'webview.openInWebView': 'string';

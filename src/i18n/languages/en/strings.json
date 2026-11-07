@@ -6,7 +6,12 @@
     "helpTranslate": "Help translate",
     "plugins": "Plugins",
     "version": "Version",
-    "whatsNew": "What's new"
+    "whatsNew": "What's new",
+    "appName": "Moon novels — قمر الروايات",
+    "appDescription": "The enhanced reader powered by the New Moon engine",
+    "moonProject": "Moon novels project (New-moon-2)",
+    "legalNotice": "Attribution & licenses",
+    "legalNoticeText": "Built on LNReader (MIT) and the New-moon-2 reader engine. Original source links and author credits are preserved on this page."
   },
   "advancedSettings": "Advanced",
   "advancedSettingsScreen": {
@@ -298,7 +303,7 @@
   "repositories": {
     "disable": "Disable",
     "disableTitle": "Disable repository?",
-    "disableWarning": "LNReader will stop checking %{name}. Its plugins will be hidden unless another enabled repository provides them. Installed plugins will remain installed.",
+    "disableWarning": "Moon novels will stop checking %{name}. Its plugins will be hidden unless another enabled repository provides them. Installed plugins will remain installed.",
     "emptyMsg": "You have no repositories. Add your first plugin repository to get started.",
     "toggle": "Toggle %{name} repository",
     "deleteRepository": "Delete repository",
@@ -367,7 +372,8 @@
     "increase": "Increase",
     "decrease": "Decrease",
     "invalidHexColor": "Enter a valid hex color code",
-    "hexColorPlaceholder": "Hex color code (e.g. #3399FF)"
+    "hexColorPlaceholder": "Hex color code (e.g. #3399FF)",
+    "restartRequired": "Restart Moon novels to apply this change."
   },
   "webview": {
     "refresh": "Refresh",

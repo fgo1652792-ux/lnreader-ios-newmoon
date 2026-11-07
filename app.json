@@ -1,7 +1,7 @@
 {
   "expo": {
-    "version": "2.1.4",
-    "name": "LNReader",
+    "version": "2.2.0",
+    "name": "Moon novels",
     "slug": "LNReader",
     "scheme": "lnreader",
     "icon": "./assets/native/ic_launcher.png",
@@ -101,7 +101,8 @@
           "NSAllowsLocalNetworking": true
         },
         "CFBundleAllowMixedLocalizations": true,
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDisplayName": "Moon novels"
       },
       "supportsTablet": true,
       "icon": "./assets/android-icons/release/web/ic_launcher-1024.png"
