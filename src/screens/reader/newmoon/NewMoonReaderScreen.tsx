@@ -47,8 +47,10 @@ import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import { useNavigation, type NavigationProp } from '@react-navigation/native';
-import type { ChapterScreenProps } from '@navigators/types';
-import type { RootStackParamList } from '@navigators/types';
+import type {
+  ChapterScreenProps,
+  RootStackParamList,
+} from '@navigators/types';
 
 import type { StringMap } from '@i18n/types';
 import { getString } from '@i18n/translations';
