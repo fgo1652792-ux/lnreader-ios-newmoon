@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import Foundation
 import UniformTypeIdentifiers
+import WebKit
 
 /**
  * iOS implementation of the NativeFile module.
@@ -12,6 +13,8 @@ import UniformTypeIdentifiers
  *  - BundlePath: absolute path of the app bundle (used by the reader WebView).
  *  - Security-scoped bookmark support so picked directories keep working
  *    across launches (mirrors Android's persisted SAF tree URIs).
+ *  - Storage analytics + maintenance helpers for the Data & Storage settings
+ *    screen (recursive directory stats, device volume info, WebView data wipe).
  */
 public class NativeFileModule: Module {
   /// UserDefaults suite storing security-scoped bookmarks keyed by path.
@@ -113,6 +116,61 @@ public class NativeFileModule: Module {
       }
     }
 
+    /// Recursively measures a directory inside the app container.
+    /// Returns {size: bytes, files, folders, skipped} where `skipped` counts
+    /// entries the enumerator could not read (permissions, broken symlinks…)
+    /// instead of failing the whole walk. Paths outside the app sandbox are
+    /// rejected — measurement must never become an arbitrary-path probe.
+    AsyncFunction("getDirectoryStats") { (path: String, promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        do {
+          // Security requirement: measurement is restricted to paths inside
+          // the app container — no arbitrary-path probing.
+          let containerURL = try self.requireAppContainerURL(path: path)
+          try self.withSecurityScope(path: containerURL.path) { url in
+            let stats = try self.computeDirectoryStats(url: url)
+            promise.resolve(stats)
+          }
+        } catch {
+          promise.reject("STATS_FAILED", error.localizedDescription)
+        }
+      }
+    }
+
+    /// Device volume information in bytes:
+    /// {total: volumeTotalCapacity, free: volumeAvailableCapacityForImportantUsage}.
+    AsyncFunction("getDeviceStorageInfo") { (promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        do {
+          let values = try URL(fileURLWithPath: "/").resourceValues(forKeys: [
+            .volumeTotalCapacityKey,
+            .volumeAvailableCapacityForImportantUsageKey,
+          ])
+          let total = values.volumeTotalCapacity ?? 0
+          let free = values.volumeAvailableCapacityForImportantUsage ?? 0
+          promise.resolve(["total": Double(total), "free": Double(free)])
+        } catch {
+          promise.reject(
+            "STORAGE_INFO_FAILED",
+            error.localizedDescription
+          )
+        }
+      }
+    }
+
+    /// Clears all website data (cookies, caches, localStorage…) of the default
+    /// WKWebsiteDataStore. NOTE: this signs the user out of every in-app
+    /// WebView session — callers must warn separately before invoking it.
+    AsyncFunction("clearWebViewWebsiteData") { (promise: Promise) in
+      let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+      WKWebsiteDataStore.default().removeData(
+        ofTypes: dataTypes,
+        modifiedSince: Date.distantPast
+      ) {
+        promise.resolve(true)
+      }
+    }
+
     /// Creates a new empty document at a user-chosen location (equivalent of
     /// Android's ACTION_CREATE_DOCUMENT). Returns the file path to write into.
     /// NOTE: the modern iOS SDK (26.x) exposes `init(forExporting urls: [URL],
@@ -196,6 +254,12 @@ public class NativeFileModule: Module {
 
     Constant("BundlePath") {
       Bundle.main.bundlePath
+    }
+
+    /// iOS only: NSTemporaryDirectory() — measured/cleared by the
+    /// Data & Storage screen.
+    Constant("TemporaryDirectoryPath") {
+      FileManager.default.temporaryDirectory.path
     }
   }
 
@@ -308,6 +372,92 @@ public class NativeFileModule: Module {
     let parentDirectory = destinationURL.deletingLastPathComponent()
     try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
     try data.write(to: destinationURL, options: .atomic)
+  }
+
+  // MARK: - Storage analytics
+
+  /// Resolves `path` and requires it to live inside the app container
+  /// (NSHomeDirectory()-prefixed after symlink + dot-segment standardization).
+  /// Used by the measurement API so it can never probe arbitrary paths.
+  private func requireAppContainerURL(path: String) throws -> URL {
+    let homeURL = URL(fileURLWithPath: NSHomeDirectory())
+      .resolvingSymlinksInPath()
+      .standardizedFileURL
+    let targetURL = URL(fileURLWithPath: path)
+      .resolvingSymlinksInPath()
+      .standardizedFileURL
+
+    guard targetURL.path == homeURL.path
+      || targetURL.path.hasPrefix(homeURL.path + "/")
+    else {
+      throw NSError(
+        domain: "NativeFile", code: 5,
+        userInfo: [NSLocalizedDescriptionKey:
+          "Path is outside the app container: \(path)"]
+      )
+    }
+    return targetURL
+  }
+
+  /// Recursive walk of `url` returning byte/file/folder totals. Permission
+  /// errors and unreadable entries are counted in `skipped` instead of
+  /// failing the whole measurement.
+  private func computeDirectoryStats(url: URL) throws -> [String: Any] {
+    let fileManager = FileManager.default
+    var isDirectory: ObjCBool = false
+    guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+      throw NSError(
+        domain: "NativeFile", code: 6,
+        userInfo: [NSLocalizedDescriptionKey: "Path does not exist: \(url.path)"]
+      )
+    }
+
+    if !isDirectory.boolValue {
+      let fileBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+      return ["size": Double(fileBytes), "files": 1, "folders": 0, "skipped": 0]
+    }
+
+    var size = 0.0
+    var files = 0
+    var folders = 0
+    var skipped = 0
+
+    let enumerator = fileManager.enumerator(
+      at: url,
+      includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .fileSizeKey],
+      options: [],
+      errorHandler: { _, _ in
+        // Count unreadable entries and keep walking.
+        skipped += 1
+        return true
+      }
+    )
+
+    while let item = enumerator?.nextObject() as? URL {
+      let values = try? item.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .fileSizeKey])
+      if let values = values {
+        if values.isDirectory == true {
+          folders += 1
+          continue
+        }
+        if values.isRegularFile == true || values.isRegularFile == nil {
+          files += 1
+          size += Double(values.fileSize ?? 0)
+          continue
+        }
+        // Non-file, non-directory entry (symlink to nowhere, socket…).
+        skipped += 1
+      } else {
+        skipped += 1
+      }
+    }
+
+    return [
+      "size": size,
+      "files": files,
+      "folders": folders,
+      "skipped": skipped,
+    ]
   }
 
   // MARK: - Security-scoped bookmarks

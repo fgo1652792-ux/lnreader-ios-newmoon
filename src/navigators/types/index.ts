@@ -1,4 +1,5 @@
 import { ChapterInfo, NovelInfo } from '@database/types';
+import type { StorageCategoryId } from '@services/storage/types';
 import {
   CompositeScreenProps,
   NavigatorScreenParams,
@@ -86,6 +87,9 @@ export type SettingsStackParamList = {
   CustomCode: undefined;
   CodeSnippets: { snippetIndex: number; isJS: boolean } | undefined;
   GenreTaxonomy: undefined;
+  DataStorage: undefined;
+  DataStorageDownloads: undefined;
+  DataStorageCategory: { categoryId: StorageCategoryId };
 };
 
 export type NovelScreenProps = NativeStackScreenProps<
@@ -205,6 +209,19 @@ export type CustomCodeSettingsScreenProps = NativeStackScreenProps<
 export type CodeSnippetsScreenProps = NativeStackScreenProps<
   SettingsStackParamList,
   'CodeSnippets'
+>;
+
+export type DataStorageScreenProps = CompositeScreenProps<
+  NativeStackScreenProps<SettingsStackParamList, 'DataStorage'>,
+  NativeStackScreenProps<MoreStackParamList, 'SettingsStack'>
+>;
+export type DataStorageDownloadsScreenProps = NativeStackScreenProps<
+  SettingsStackParamList,
+  'DataStorageDownloads'
+>;
+export type DataStorageCategoryScreenProps = NativeStackScreenProps<
+  SettingsStackParamList,
+  'DataStorageCategory'
 >;
 
 declare global {

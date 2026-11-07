@@ -28,6 +28,7 @@ jest.mock('@modules/native-file', () => ({
     DocumentDirectoryPath: '/mock/documents',
     ExternalDirectoryPath: '/mock/external',
     ExternalCachesDirectoryPath: '/mock/caches',
+    TemporaryDirectoryPath: '/mock/tmp',
     writeFile: jest.fn(),
     readFile: jest.fn(() => ''),
     copyFile: jest.fn(),
@@ -43,6 +44,11 @@ jest.mock('@modules/native-file', () => ({
     unlink: jest.fn(),
     readDir: jest.fn(() => []),
     downloadFile: jest.fn().mockResolvedValue(),
+    getDirectoryStats: jest.fn(() =>
+      Promise.resolve({ size: 0, files: 0, folders: 0, skipped: 0 }),
+    ),
+    getDeviceStorageInfo: jest.fn(() => Promise.resolve({ total: 0, free: 0 })),
+    clearWebViewWebsiteData: jest.fn(() => Promise.resolve(true)),
   },
 }));
 

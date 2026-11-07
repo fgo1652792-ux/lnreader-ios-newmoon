@@ -246,6 +246,27 @@ export const deleteChapters = async (
   });
 };
 
+// [10-C] Data & Storage deletion hook: the storage service removes the
+// chapter folders itself (so it can measure freed bytes and verify), then
+// calls this file-only update. `isDownloaded` flips to false and the
+// `update_novel_stats_on_update` trigger recomputes Novel.chaptersDownloaded.
+export const markChaptersNotDownloaded = async (
+  chapterIds: number[],
+): Promise<void> => {
+  if (!chapterIds.length) {
+    return;
+  }
+  await dbManager.write(async tx => {
+    for (const ids of chunkChapterIds(chapterIds)) {
+      await tx
+        .update(chapterSchema)
+        .set({ isDownloaded: false })
+        .where(inArray(chapterSchema.id, ids))
+        .run();
+    }
+  });
+};
+
 /** Increases the timeSpent for the specified chapterId by the given amount */
 export const increaseTimeSpent = async (
   chapterId: number,

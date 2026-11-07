@@ -16,12 +16,29 @@ export type FileCopyResult = {
   size: number;
 };
 
+/** Recursive measurement result (bytes + entry counts). */
+export type DirectoryStats = {
+  size: number;
+  files: number;
+  folders: number;
+  /** Entries that could not be read (permissions, broken symlinks…). */
+  skipped: number;
+};
+
+/** Device volume information in bytes. */
+export type DeviceStorageInfo = {
+  total: number;
+  free: number;
+};
+
 type NativeFileModule = {
   DocumentDirectoryPath: string;
   ExternalDirectoryPath: string;
   ExternalCachesDirectoryPath: string;
   /** iOS only: absolute path of the main app bundle. */
   BundlePath: string;
+  /** iOS only: NSTemporaryDirectory(). */
+  TemporaryDirectoryPath: string;
   createDocument(filename: string, mimeType: string): Promise<string>;
   pickDocument(mimeType: string): Promise<string>;
   pickDirectory(): Promise<DirectorySelection>;
@@ -47,6 +64,19 @@ type NativeFileModule = {
     headers: Record<string, string>,
     body?: string,
   ): Promise<void>;
+  /**
+   * iOS only: recursive byte/folder/file measurement of a directory that must
+   * be inside the app container. Rejects for missing/outside-container paths.
+   */
+  getDirectoryStats(path: string): Promise<DirectoryStats>;
+  /** iOS only: device volume {total, free} in bytes. */
+  getDeviceStorageInfo(): Promise<DeviceStorageInfo>;
+  /**
+   * iOS only: clears every WKWebsiteDataStore data type (cookies, caches,
+   * localStorage…). Signs the user out of in-app WebView sessions — callers
+   * must show a dedicated warning first.
+   */
+  clearWebViewWebsiteData(): Promise<boolean>;
 };
 
 export default requireNativeModule<NativeFileModule>('NativeFile');

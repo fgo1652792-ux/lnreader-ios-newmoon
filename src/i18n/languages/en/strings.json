@@ -369,6 +369,97 @@
     "invalidHexColor": "Enter a valid hex color code",
     "hexColorPlaceholder": "Hex color code (e.g. #3399FF)"
   },
+  "dataStorage": {
+    "title": "Data & storage",
+    "refresh": "Re-measure",
+    "device": {
+      "title": "Device storage",
+      "free": "Free",
+      "used": "Used",
+      "total": "Total"
+    },
+    "appData": {
+      "title": "App data",
+      "total": "Total app data",
+      "loadingError": "Could not measure storage. Use the refresh button to retry."
+    },
+    "categories": {
+      "downloads": "Downloaded chapters",
+      "downloadsDesc": "Chapter files and covers saved for offline reading",
+      "images": "Images & cache",
+      "imagesDesc": "Cover and image caches — re-downloaded automatically when needed",
+      "databases": "Database",
+      "databasesDesc": "Library, progress, history and settings data",
+      "backups": "Backup staging",
+      "backupsDesc": "Temporary archives created while saving or restoring a backup",
+      "crashLogs": "Crash logs",
+      "crashLogsDesc": "App-local crash diagnostics",
+      "temp": "Temporary files",
+      "tempDesc": "Leftovers from downloads, exports and restores",
+      "webview": "WebView data",
+      "webviewDesc": "Site data and caches of pages opened inside the app",
+      "documents": "Other documents",
+      "documentsDesc": "Documents outside the Novels and Plugins folders"
+    },
+    "footnote": "The iOS Settings app may show different numbers: the system manages parts of app data and measures it differently.",
+    "personalData": {
+      "title": "Personal data",
+      "library": "Library & reading progress",
+      "history": "History & statistics",
+      "settings": "Settings & tracker logins",
+      "irreversible": "Not recoverable — never deleted automatically",
+      "note": "There is no bulk delete for this data here, on purpose."
+    },
+    "downloadsScreen": {
+      "title": "Downloaded chapters",
+      "emptyDesc": "Chapters you download for offline reading appear here with their size",
+      "chaptersCount": {
+        "one": "%{count} chapter",
+        "other": "%{count} chapters"
+      },
+      "deleteAction": "Delete files",
+      "freedToast": "Freed %{size} — “%{novel}” stays in your library"
+    },
+    "categoryScreen": {
+      "currentSize": "Current size",
+      "approximate": "approximate",
+      "filesCount": {
+        "one": "%{count} file",
+        "other": "%{count} files"
+      },
+      "willDelete": "What will be deleted",
+      "delete": "Delete",
+      "deleteConfirmTitle": "Delete “%{category}”?",
+      "freed": "Freed %{size}",
+      "newSize": "Now: %{size}",
+      "failed": "Some items could not be deleted:",
+      "verified": "Verified clean",
+      "unverified": "Could not fully verify"
+    },
+    "webviewWarning": {
+      "title": "You will be signed out",
+      "message": "Clearing WebView data removes cookies and logins for every site opened inside the app. You will have to sign in again.",
+      "confirm": "Clear anyway"
+    },
+    "willDelete": {
+      "images": "Image caches and thumbnails. Covers stored with your novels are kept, and images are re-downloaded when needed.",
+      "temp": "Temporary files created by downloads, exports and restores. Running tasks are protected.",
+      "webview": "All website data of the in-app browser: cookies, caches and site settings.",
+      "crashLogs": "Crash diagnostics stored inside the app. System crash reports are not touched.",
+      "backups": "Backup staging files inside the app only. Finished backups saved at your chosen destination are never touched."
+    },
+    "confirm": {
+      "deleteChaptersTitle": "Delete downloaded chapters?",
+      "deleteChaptersMessage": "The files will be deleted and the novel stays in your library.",
+      "deleteCategoryMessage": "This cannot be undone."
+    },
+    "errors": {
+      "downloadsInProgress": "Downloads are running — wait for them to finish before deleting files",
+      "backupInProgress": "A backup or restore is running — try again when it finishes",
+      "tasksInProgress": "App tasks are running — try again when they finish",
+      "categoryNotDeletable": "This category cannot be deleted"
+    }
+  },
   "webview": {
     "refresh": "Refresh",
     "share": "Share",

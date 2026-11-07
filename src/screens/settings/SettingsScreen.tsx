@@ -94,6 +94,16 @@ const SettingsScreen = ({ navigation }: SettingsScreenProps) => {
           theme={theme}
         />
         <List.Item
+          title={getString('dataStorage.title')}
+          icon="database-outline"
+          onPress={() =>
+            navigation.navigate('SettingsStack', {
+              screen: 'DataStorage',
+            })
+          }
+          theme={theme}
+        />
+        <List.Item
           title={getString('advancedSettings')}
           icon="code-tags"
           onPress={() =>
