@@ -11,6 +11,7 @@ import { Appearance, AppState, ColorSchemeName } from 'react-native';
 import {
   useMMKVBoolean,
   useMMKVNumber,
+  useMMKVObject,
   useMMKVString,
 } from 'react-native-mmkv';
 import type { Material3Theme } from '@pchmn/expo-material3-theme';
@@ -25,6 +26,12 @@ import {
   isDynamicThemeAvailable,
   toDynamicThemeColors,
 } from '@theme/dynamic';
+import {
+  applyOverrides,
+  loadCustomOverrides,
+  CUSTOM_THEME_OVERRIDES_KEY,
+  type CustomThemeOverridesByMode,
+} from '@theme/customTheme';
 
 const getElevationColor = (colors: ThemeColors, elevation: number): string => {
   return Color(colors.surface)
@@ -159,6 +166,10 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
   const [themeMode = 'system'] = useMMKVString('THEME_MODE');
   const [isAmoledBlack = false] = useMMKVBoolean('AMOLED_BLACK');
   const [customAccent] = useMMKVString('CUSTOM_ACCENT_COLOR');
+  // Advanced appearance customizer: per-mode token overrides on top of the
+  // base theme (validated hex only — a corrupted payload degrades to none).
+  const [customOverrides = loadCustomOverrides()] =
+    useMMKVObject<CustomThemeOverridesByMode>(CUSTOM_THEME_OVERRIDES_KEY);
 
   const [systemColorScheme, setSystemColorScheme] = useState<ColorSchemeName>(
     Appearance.getColorScheme() ?? 'unspecified',
@@ -192,7 +203,16 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
     );
     const withAmoled = applyAmoledBlack(baseTheme, isAmoledBlack);
     const withAccent = applyCustomAccent(withAmoled, customAccent);
-    const finalTheme = addComputedColors(withAccent);
+    // Overrides come BEFORE computed colors so derived tokens stay in sync.
+    const isDark =
+      themeMode === 'system'
+        ? systemColorScheme === 'dark'
+        : themeMode === 'dark';
+    const withOverrides = applyOverrides(
+      withAccent,
+      isDark ? customOverrides?.dark : customOverrides?.light,
+    );
+    const finalTheme = addComputedColors(withOverrides);
 
     return finalTheme;
   }, [
@@ -202,6 +222,7 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
     dynamicTheme,
     isAmoledBlack,
     customAccent,
+    customOverrides,
   ]);
 
   return createElement(ThemeContext.Provider, { value: theme }, children);
