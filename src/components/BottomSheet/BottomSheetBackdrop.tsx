@@ -11,9 +11,9 @@ import { getString } from '@i18n/translations';
 const styles = StyleSheet.create({
   container: {
     bottom: 0,
-    left: 0,
+    start: 0,
     position: 'absolute',
-    right: 0,
+    end: 0,
     top: 0,
   },
 });

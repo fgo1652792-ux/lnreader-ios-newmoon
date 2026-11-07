@@ -66,8 +66,8 @@ export const ToastHost: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    start: 0,
+    end: 0,
     alignItems: 'center',
     zIndex: 1000,
     elevation: 1000,

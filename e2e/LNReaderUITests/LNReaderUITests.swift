@@ -7,7 +7,8 @@ import XCTest
  * the CI simulator: it completes onboarding, walks the tabs, switches the app
  * language from English to Arabic (RTL rebuild via the React-runtime reload),
  * opens the reader settings preview, proves tap-to-toggle reader chrome with
- * accessibility probes, and exercises the interactive color picker.
+ * accessibility probes, and exercises the interactive color picker. A further
+ * regression locks the RTL top-tab indicator to the tapped tab in Browse.
  *
  * Screenshots are written to /tmp/lnreader-e2e (allowed for simulator
  * processes) and attached to the test report; the CI workflow uploads both.
@@ -198,5 +199,64 @@ final class LNReaderUITests: XCTestCase {
     waitTappable(
       ["Settings", "الإعدادات"], 15,
       "app unresponsive after navigation stress")
+  }
+
+  /// Regression for the RTL top-tab indicator desync (iOS pager-view emits
+  /// negative offsets in RTL, which dragged the old position-driven indicator
+  /// under the wrong tab). The indicator is now rendered inside each tab and
+  /// driven by navigation state: exactly one "tab-indicator-<route.key>"
+  /// element is exposed to the accessibility tree — the focused tab's.
+  ///
+  /// Library category tabs would deserve the same assertion, but a fresh
+  /// install has no categories, so that tab bar never renders here.
+  func testBrowseTabIndicatorMatchesTappedTabInRTL() {
+    app.launch()
+    sleep(6)
+    if let complete = tappable(["Complete", "إكمال"]), complete.exists {
+      complete.tap()
+      sleep(3)
+    }
+    waitTappable(["More", "المزيد"], 40, "bottom tabs did not render")
+
+    // Ensure the Arabic (RTL) UI, reusing the language-switch flow only when
+    // a previous test has not already applied it.
+    if tappable(["المكتبة"]) == nil {
+      tapWhenReady(["More", "المزيد"], 15, "More tab missing")
+      tapWhenReady(["Settings", "الإعدادات"], 20, "Settings row missing")
+      tapWhenReady(["Appearance", "مظهر"], 20, "Appearance row missing")
+      tapWhenReady(["App language", "لغة التطبيق"], 20, "language row missing")
+      tapWhenReady(["العربية"], 15, "Arabic option missing")
+      tapWhenReady(["Apply now", "تطبيق الآن"], 15, "apply-now dialog missing")
+      waitExists(
+        app.buttons["المكتبة"].firstMatch, 60,
+        "Arabic (RTL) UI did not appear after language switch")
+    }
+    waitTappable(["المكتبة", "Library"], 20, "library tab missing in RTL")
+    screenshot("11-rtl-ready")
+
+    // Browse screen: Sources ("المصادر") is the initial top tab.
+    tapWhenReady(["تصفح", "Browse"], 15, "Browse tab missing")
+    let sourcesIndicator = element(withIdentifier: "tab-indicator-sources")
+    let pluginsIndicator = element(withIdentifier: "tab-indicator-plugins")
+
+    waitExists(
+      sourcesIndicator, 30, "sources tab indicator missing in RTL")
+    XCTAssertTrue(
+      sourcesIndicator.isHittable, "sources indicator not hittable in RTL")
+    waitVanishes(
+      pluginsIndicator, 10,
+      "plugins tab indicator active while sources is selected")
+    screenshot("12-browse-rtl-indicator-sources")
+
+    // Tap Plugins ("الإضافات"): the indicator must follow the tapped tab.
+    tapWhenReady(["الإضافات", "Plugins"], 15, "plugins top tab missing")
+    waitExists(
+      pluginsIndicator, 15, "plugins tab indicator missing after tap in RTL")
+    XCTAssertTrue(
+      pluginsIndicator.isHittable, "plugins indicator not hittable in RTL")
+    waitVanishes(
+      sourcesIndicator, 10,
+      "sources tab indicator still active after switching to plugins")
+    screenshot("13-browse-rtl-indicator-plugins")
   }
 }

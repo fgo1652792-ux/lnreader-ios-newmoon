@@ -207,8 +207,8 @@ const styles = StyleSheet.create({
   bottomBar: {
     position: 'absolute',
     bottom: 0,
-    left: 0,
-    right: 0,
+    start: 0,
+    end: 0,
     height: 24,
     justifyContent: 'center',
   },

@@ -170,8 +170,8 @@ const styles = StyleSheet.create({
   indicator: {
     position: 'absolute',
     top: 0,
-    left: 0,
-    right: 0,
+    start: 0,
+    end: 0,
     bottom: 0,
     borderRadius: 16,
   },
