@@ -289,11 +289,14 @@ jobs:
           echo "::error::UI tests failed after 3 attempts"
           exit 1
 
-      - name: Collect UI test screenshots
+      - name: Collect UI test screenshots + AX diagnostics
         if: always()
         run: |
           mkdir -p artifacts/e2e-screenshots
           cp /tmp/lnreader-e2e/*.png artifacts/e2e-screenshots/ 2>/dev/null || true
+          # AX tree dumps (app.debugDescription) — decisive evidence for the
+          # "renders but AX queries fail" signature.
+          cp /tmp/lnreader-e2e/*.txt artifacts/e2e-screenshots/ 2>/dev/null || true
           ls -la artifacts/e2e-screenshots || true
 
       - name: Post-run stability watch (60s)
@@ -314,7 +317,12 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts
-          xcrun simctl spawn "$SIM_NAME" log show --last 10m --style compact > artifacts/simulator-log.txt 2>/dev/null || true
+          # Accessibility subsystem + testmanagerd view of the app — the
+          # other half of the AX-deadness evidence.
+          xcrun simctl spawn "$SIM_NAME" log show --last 15m --style compact \
+            --predicate 'subsystem CONTAINS[c] "accessibility" OR process == "testmanagerd"' \
+            > artifacts/ax-log.txt 2>/dev/null || true
+          xcrun simctl spawn "$SIM_NAME" log show --last 5m --style compact > artifacts/simulator-log.txt 2>/dev/null || true
           xcrun simctl list devices > artifacts/simctl-devices.txt 2>/dev/null || true
           cp xcodebuild-sim.log artifacts/ 2>/dev/null || true
           cp xcodebuild-e2e.log artifacts/ 2>/dev/null || true

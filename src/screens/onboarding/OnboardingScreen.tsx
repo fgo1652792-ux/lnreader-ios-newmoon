@@ -61,6 +61,7 @@ export default function OnboardingScreen() {
       <Button
         title={getString('onboardingScreen.complete')}
         mode="contained"
+        testID="onboarding-complete"
         onPress={() => {
           MMKVStorage.set('IS_ONBOARDED', true);
         }}

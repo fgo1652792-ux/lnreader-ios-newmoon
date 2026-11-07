@@ -38,6 +38,38 @@ final class LNReaderUITests: XCTestCase {
     add(attachment)
   }
 
+  /// Dumps the accessibility tree XCUITest sees for the app into the shots
+  /// dir + as a text attachment. This is the DECISIVE diagnostic for the
+  /// "app renders fine but every AX query fails" signature: it proves
+  /// whether the snapshot is empty (runner-level AX problem) or contains
+  /// elements our queries miss (query mismatch).
+  private func dumpAXTree(_ name: String) {
+    let desc = app.debugDescription
+    let url = URL(fileURLWithPath: "\(Self.shotsDir)/\(name).txt")
+    try? desc.write(to: url, atomically: true, encoding: .utf8)
+    let attachment = XCTAttachment(string: desc)
+    attachment.name = name
+    attachment.lifetime = .keepAlways
+    add(attachment)
+  }
+
+  /// Waits for a bottom tab by its deterministic testID first
+  /// (`tab-<RouteName>` — language-independent), then by label.
+  private func waitTabReady(_ routeName: String, _ labels: [String],
+                            _ timeout: TimeInterval = 120,
+                            _ message: String) {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      let byId = element(withIdentifier: "tab-\(routeName)")
+      if byId.exists { return }
+      if tappable(labels) != nil { return }
+      sleep(1)
+    }
+    // Last action before failing: leave the AX tree behind as evidence.
+    dumpAXTree("ax-tree-\(message.replacingOccurrences(of: " ", with: "-"))")
+    XCTFail("UI gate failed: \(message)")
+  }
+
   private func waitExists(
     _ element: XCUIElement, _ timeout: TimeInterval = 20, _ message: String
   ) {
@@ -103,19 +135,34 @@ final class LNReaderUITests: XCTestCase {
 
   // MARK: tests
 
+  /// FAST probe (no gates — always passes): launches the app and dumps the
+  /// AX tree. Runs first (alphabetical). Its artifact answers once and for
+  /// all whether XCUITest receives ANY accessibility data for this app.
+  func testAAccessibilityTreeProbe() {
+    app.launch()
+    sleep(6)
+    screenshot("ax-probe-launch")
+    dumpAXTree("ax-probe-tree")
+  }
+
   func testOnboardingLanguageRTLReaderToolsAndColorPicker() {
     app.launch()
     sleep(6)
     screenshot("01-launch")
+    dumpAXTree("ax-tree-onboarding")
 
     // 1) Onboarding gate on first run ("Complete" / "إكمال").
-    if let complete = tappable(["Complete", "إكمال"]), complete.exists {
+    let completeById = element(withIdentifier: "onboarding-complete")
+    if completeById.exists {
+      completeById.tap()
+      sleep(3)
+    } else if let complete = tappable(["Complete", "إكمال"]), complete.exists {
       complete.tap()
       sleep(3)
     }
 
-    // 2) Bottom tabs render.
-    waitTappable(["More", "المزيد"], 120,
+    // 2) Bottom tabs render (deterministic identifier first).
+    waitTabReady("More", ["More", "المزيد"], 120,
                  "bottom tabs did not render after launch")
     screenshot("02-library")
 
@@ -178,11 +225,12 @@ final class LNReaderUITests: XCTestCase {
   func testAppSurvivesRepeatedNavigation() {
     app.launch()
     sleep(6)
+    dumpAXTree("ax-tree-stress")
     if let complete = tappable(["Complete", "إكمال"]), complete.exists {
       complete.tap()
       sleep(3)
     }
-    waitTappable(["More", "المزيد"], 120, "tabs did not render")
+    waitTabReady("More", ["More", "المزيد"], 120, "tabs did not render")
 
     // Rapid tab cycling + settings push/pop must not crash the app.
     for _ in 0..<3 {
@@ -216,7 +264,7 @@ final class LNReaderUITests: XCTestCase {
       complete.tap()
       sleep(3)
     }
-    waitTappable(["More", "المزيد"], 120, "bottom tabs did not render")
+    waitTabReady("More", ["More", "المزيد"], 120, "bottom tabs did not render")
 
     // Ensure the Arabic (RTL) UI, reusing the language-switch flow only when
     // a previous test has not already applied it.

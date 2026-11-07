@@ -91,6 +91,12 @@ function CustomBottomTabBar({
             onPress={onPress}
             onLongPress={onLongPress}
             style={styles.pressable}
+            // Deterministic handles for XCUITest (identifier-based queries
+            // survive any UI-language change; labels stay as the AX name).
+            testID={`tab-${route.name}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: isFocused }}
+            accessibilityLabel={label || route.name}
           >
             {/* Icon */}
             <View
