@@ -13,10 +13,26 @@
 //   • Chapter identity is positional (NewMoonAdapter) — no sequential-number
 //     assumptions anywhere.
 //
-// Performance rules honored: shellHtml is built ONCE per mount (useMemo with
-// empty deps), chapter HTML is pushed straight through injectJavaScript
-// (never round-tripped through state) and the WebView source never changes
-// after mount.
+// Performance rules honored: shellHtml is built ONCE per mount and the
+// WebView source NEVER changes after mount — not even when the status bar
+// hides. Safe-area changes are pushed through the bridge as a settings patch
+// (the shell re-writes --wor-safe-top/bottom in applyTheme), so tapping the
+// screen to toggle the dock can never reload the document.
+//
+// WebView lifecycle protocol (documented contract):
+//   1. mount      → source={html: shellHtml} (frozen string)
+//   2. load start → if the bridge was already ready this is a REAL reload
+//                   (WKWebView content-process kill, OOM, etc.): reset the
+//                   bridge, bump the doc epoch, cancel in-flight chapter
+//                   fetches and show the overlay again.
+//   3. `ready`    → shell booted: mark bridge ready, flush queue, re-send
+//                   settings/chapters/words/fav, then re-send the chapter ONLY
+//                   if none reached the bridge yet (chapterSentRef guard — no
+//                   duplicate fetches).
+//   4. content-process termination (iOS) / render-process gone (Android)
+//                 → recoverDocument(): reload + full re-handshake.
+//   5. Stale-guard: docEpochRef invalidates needNext/append work from a dead
+//                   document; chapterReqRef cancels superseded chapter loads.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -75,6 +91,7 @@ import {
   parseShellEvent,
   type WebViewHandle,
 } from './NewMoonBridge';
+import { getLegacyTtsPrefs } from './settingsMigration';
 import {
   buildWNumMap,
   clearScrollFor,
@@ -195,11 +212,19 @@ const NewMoonReaderScreen = ({
   const ttsChunksRef = useRef<string[]>([]);
   const ttsIndexRef = useRef(0);
   const ttsPlayingRef = useRef(false);
+  /** Legacy TTS voice prefs (type-checked once at mount) — keeps the user's
+   *  existing voice settings working with the native speech bar. */
+  const ttsPrefsRef = useRef(getLegacyTtsPrefs());
 
   // --------------------------------------------------------------- state ---
   const [loading, setLoading] = useState(true);
   const [loadingNext, setLoadingNext] = useState(false);
   const [dockOpen, setDockOpen] = useState(initialSettings.dockOpen !== false);
+  /** Safe-area values captured at mount — they seed the frozen document. */
+  const [mountInsets] = useState(() => ({
+    top: insets.top,
+    bottom: insets.bottom,
+  }));
   const [, setIsFavorite] = useState(!!novel.inLibrary);
   const [chapterTitle, setChapterTitle] = useState(initialChapter.name);
   const [ttsPlaying, setTtsPlaying] = useState(false);
@@ -217,13 +242,18 @@ const NewMoonReaderScreen = ({
   }, [initialSettings]);
 
   // ---------------------------------------------------------- shell html ---
-  // Built ONCE per mount. Settings changes NEVER rebuild it (the shell applies
-  // settings via the bridge); safe areas and the asset prefix are static.
+  // Built ONCE per mount from values captured at mount time. Settings changes
+  // NEVER rebuild it (the shell applies settings via the bridge) and live
+  // safe-area insets are NOT dependencies — the status-bar hide/show cycle
+  // that accompanies dock toggling would otherwise produce a new HTML string
+  // and reload the whole document (the P0 "chapter reloads on every tap"
+  // bug). Live insets travel through the bridge instead (see the effect
+  // below); the frozen document only carries the mount-time values.
   const shellHtml = useMemo(
     () =>
       buildWorShell({
-        safeTop: insets.top,
-        safeBottom: insets.bottom,
+        safeTop: mountInsets.top,
+        safeBottom: mountInsets.bottom,
         novelTitle: novel.name,
         novelCover: novel.cover ?? '',
         userName: '',
@@ -231,7 +261,7 @@ const NewMoonReaderScreen = ({
         initialSettings: { ...initialSettings },
         fontsBase: getReaderAssetsPrefix(),
       }),
-    [initialSettings, insets.top, insets.bottom, novel.name, novel.cover],
+    [initialSettings, mountInsets, novel.name, novel.cover],
   );
   const assetsUriPrefix = useMemo(() => getReaderAssetsPrefix(), []);
 
@@ -441,6 +471,8 @@ const NewMoonReaderScreen = ({
       // expo-speech's speak() is synchronous-void; runtime errors surface
       // through the onError callback below (not a rejected promise).
       Speech.speak(chunks[index], {
+        rate: ttsPrefsRef.current.rate,
+        pitch: ttsPrefsRef.current.pitch,
         onDone: () => speakNextChunkRef.current(),
         onError: () => stopTtsRef.current(),
       });
@@ -1070,15 +1102,62 @@ const NewMoonReaderScreen = ({
     };
   });
 
-  const handleOnMessage = useCallback(
-    (event: { nativeEvent: { data: string } }) => {
-      const parsed = parseShellEvent(event.nativeEvent?.data);
-      if (parsed) {
-        handleShellEventRef.current(parsed);
+  // ----------------------------------------------------- safe-area sync ---
+  // The document is frozen, so live safe-area changes (status bar hide/show
+  // from dock toggling, rotation, iPadOS stage-manager edges) must reach the
+  // shell as a settings patch. The engine's `settings` receive branch merges
+  // safeTop/safeBottom into S and applyTheme() rewrites --wor-safe-top/bottom
+  // — a pure CSS-variable update with zero document reloads.
+  useEffect(() => {
+    if (insets.top === mountInsets.top && insets.bottom === mountInsets.bottom) {
+      return;
+    }
+    bridgeRef.current.post({
+      kind: 'settings',
+      settings: { safeTop: insets.top, safeBottom: insets.bottom },
+    });
+  }, [insets.top, insets.bottom, mountInsets]);
+
+  // ------------------------------------------------ document recovery ---
+  /** Full re-handshake after the WebView document died or was reloaded:
+   *  invalidates stale work, clears the bridge queue, re-arms the chapter
+   *  pipeline and reloads the (frozen) source. Reading position and theme
+   *  survive — both live outside the document (MMKV + the shell re-applies
+   *  settings from settingsRef on the next `ready`). */
+  const recoverDocument = useCallback(() => {
+    docEpochRef.current += 1; // stale needNext/append work is dropped
+    chapterReqRef.current += 1; // in-flight chapter fetches are dropped
+    loadingChapterRef.current = false;
+    chapterSentRef.current = false;
+    loadingNextRef.current = false;
+    endReachedRef.current = false;
+    appendedRef.current = [];
+    setLoadingNext(false);
+    setLoading(true);
+    bridgeRef.current.reset();
+    webViewRef.current?.reload();
+  }, []);
+
+  // WKWebView kills its content process under memory pressure (iPad 7 has
+  // ~3GB); without this handler the reader stays a BLACK screen forever.
+  const onContentProcessTerminate = useCallback(() => {
+    recoverDocument();
+  }, [recoverDocument]);
+
+  /** Watchdog: the loading overlay must never trap the reader. If no chapter
+   *  pipeline activity is visible after 30s, drop the overlay — the shell
+   *  renders whatever it has and the user can tap to retry navigation. */
+  useEffect(() => {
+    if (!loading) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (!loadingChapterRef.current) {
+        setLoading(false);
       }
-    },
-    [],
-  );
+    }, 30000);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   // ------------------------------------------------------------- effects ---
   // Boot: chapters + words + the initial chapter.
@@ -1155,6 +1234,28 @@ const NewMoonReaderScreen = ({
     [],
   );
 
+  // --------------------------------------------------------- webview io ---
+  const handleOnMessage = useCallback(
+    (event: { nativeEvent: { data: string } }) => {
+      const parsed = parseShellEvent(event.nativeEvent?.data);
+      if (parsed) {
+        handleShellEventRef.current(parsed);
+      }
+    },
+    [],
+  );
+
+  // A load that begins while the bridge was already ready is a REAL document
+  // reload (content-process kill recovery, system OOM reload…). Reset the
+  // handshake so buffered commands are never injected into a half-booted
+  // document. The FIRST load start (bridge not ready yet) is the normal boot
+  // and must keep its buffered boot messages.
+  const handleLoadStart = useCallback(() => {
+    if (bridgeRef.current.isReady()) {
+      recoverDocument();
+    }
+  }, [recoverDocument]);
+
   // ------------------------------------------------------------- render ---
   const webViewBackground = useMemo(
     () => (isLightColor(initialSettings.bgColor) ? '#f3efe7' : '#000000'),
@@ -1174,6 +1275,12 @@ const NewMoonReaderScreen = ({
         domStorageEnabled
         allowFileAccess
         onMessage={handleOnMessage}
+        onLoadStart={handleLoadStart}
+        // iOS: WKWebView content process was killed (memory pressure) — the
+        // view would otherwise stay a black screen forever. Android: render
+        // process gone. Both recover through the full re-handshake.
+        onContentProcessDidTerminate={onContentProcessTerminate}
+        onRenderProcessGone={onContentProcessTerminate}
       />
 
       {/* Engine 'keepAwake' switch → native wake lock (same as classic). */}

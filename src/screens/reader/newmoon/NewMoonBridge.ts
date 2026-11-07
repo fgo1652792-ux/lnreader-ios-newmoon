@@ -77,6 +77,15 @@ export class NewMoonBridge {
     pending.forEach(msg => this.inject(msg));
   };
 
+  /** True when `ready` was seen and not reset since. A load that starts while
+   *  this is true is a REAL document reload (content-process kill, etc.) —
+   *  the screen resets the bridge so buffered commands are never injected
+   *  into a half-booted document (where `window.__wor` does not exist yet and
+   *  injectJavaScript silently drops them). */
+  isReady = (): boolean => {
+    return this.ready;
+  };
+
   /** The WebView remounted (or is going away) — start a fresh queue. */
   reset = (): void => {
     this.ready = false;

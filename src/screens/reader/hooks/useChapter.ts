@@ -156,7 +156,12 @@ export default function useChapter(
   });
 
   useEffect(() => {
-    NativeVolumeButtonListener.setActive(useVolumeButtons);
+    // Explicit boolean coercion: a stale settings object persisted by an older
+    // app version can surface this field as undefined/null — passing that to
+    // the native setActive(Bool) throws FunctionCallException and crashes the
+    // reader (release 2.1.4 crash log). The settings hook now merges defaults,
+    // and this guard makes the native contract impossible to violate.
+    NativeVolumeButtonListener.setActive(!!useVolumeButtons);
     return () => NativeVolumeButtonListener.setActive(false);
   }, [useVolumeButtons]);
 

@@ -434,6 +434,21 @@ export const useChapterGeneralSettings = () => {
   const [chapterGeneralSettings = initialChapterGeneralSettings, setSettings] =
     useMMKVObject<ChapterGeneralSettings>(CHAPTER_GENERAL_SETTINGS);
 
+  // ALWAYS overlay the stored object with the defaults. An object persisted by
+  // an older app version lacks the keys added since (useVolumeButtons,
+  // verticalSeekbar, …) — without this merge those fields read as `undefined`
+  // and reach native modules as undefined (e.g. the volume-button listener's
+  // setActive(Bool) → FunctionCallException "Conversion from JavaScript value
+  // of type 'undefined' to native 'Bool' failed"). Memoized so the reader's
+  // derived components don't churn on every render.
+  const chapterGeneralSettingsWithDefaults = useMemo(
+    () => ({
+      ...initialChapterGeneralSettings,
+      ...chapterGeneralSettings,
+    }),
+    [chapterGeneralSettings],
+  );
+
   const writeGeneralSettings = createSettingsWriter<ChapterGeneralSettings>(
     CHAPTER_GENERAL_SETTINGS,
   );
@@ -441,7 +456,7 @@ export const useChapterGeneralSettings = () => {
     writeGeneralSettings(setSettings, values);
 
   return {
-    ...chapterGeneralSettings,
+    ...chapterGeneralSettingsWithDefaults,
     setChapterGeneralSettings,
   };
 };

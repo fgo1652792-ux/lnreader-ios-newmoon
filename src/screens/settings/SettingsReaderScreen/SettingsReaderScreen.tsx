@@ -1,5 +1,18 @@
+// lnreader-ios/src/screens/settings/SettingsReaderScreen/SettingsReaderScreen.tsx
+//
+// Reader settings — NEW MOON ONLY.
+//
+// Decision (P0 settings-unification): New Moon is the only visible reader
+// engine. The classic LNReader preview (SettingsReaderWebView) and the
+// engine switcher are removed; the tabs below edit the New Moon store
+// (@wor_reader_settings_v4) directly, and the preview is the REAL worShell
+// engine running in a WebView (WorPreview) — what you see is what you read.
+//
+// One-time migration: legacy CHAPTER_READER_SETTINGS values are migrated into
+// the New Moon store with per-value type checks (settingsMigration.ts).
+
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BottomSheetModalMethods } from '@gorhom/bottom-sheet/lib/typescript/types';
 import { useNavigation } from '@react-navigation/native';
 import { FAB } from 'react-native-paper';
@@ -12,16 +25,17 @@ import {
 
 import { Appbar, SafeAreaView, TopTabBar } from '@components/index';
 import BottomSheet from '@components/BottomSheet/BottomSheet';
-import { useChapterReaderSettings, useTheme } from '@hooks/persisted';
+import { useTheme } from '@hooks/persisted';
 import { getString } from '@i18n/translations';
+import { showToast } from '@utils/showToast';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import SettingsReaderWebView from './components/SettingsReaderWebView';
-import EngineSelector from './components/EngineSelector';
-import DisplayTab from './tabs/DisplayTab';
-import ThemeTab from './tabs/ThemeTab';
-import NavigationTab from './tabs/NavigationTab';
-import AccessibilityTab from './tabs/AccessibilityTab';
+import WorPreview from './components/WorPreview';
+import WorDisplayTab from './tabs/WorDisplayTab';
+import WorThemeTab from './tabs/WorThemeTab';
+import WorNavigationTab from './tabs/WorNavigationTab';
+import WorAccessibilityTab from './tabs/WorAccessibilityTab';
+import { migrateLegacyReaderSettingsOnce } from '../../reader/newmoon/settingsMigration';
 
 type ReaderSettingsRoute = {
   key: 'display' | 'theme' | 'navigation' | 'accessibility';
@@ -64,14 +78,6 @@ const tabOptions: TabDescriptor<ReaderSettingsRoute> = {
   label: () => null,
 };
 
-export type TextAlignments =
-  | 'left'
-  | 'center'
-  | 'auto'
-  | 'right'
-  | 'justify'
-  | undefined;
-
 const SettingsReaderScreen = () => {
   const theme = useTheme();
   const navigation = useNavigation();
@@ -79,10 +85,18 @@ const SettingsReaderScreen = () => {
   const { bottom, right } = useSafeAreaInsets();
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const [tabIndex, setTabIndex] = useState(0);
+  const migrationRanRef = useRef(false);
 
-  const readerSettings = useChapterReaderSettings();
-  const BOTTOM_SHEET_HEIGHT = screenHeight * 0.7;
-  const readerBackgroundColor = readerSettings.theme;
+  // One-time legacy → New Moon settings migration (type-checked, best-effort).
+  useEffect(() => {
+    if (migrationRanRef.current) {
+      return;
+    }
+    migrationRanRef.current = true;
+    if (migrateLegacyReaderSettingsOnce()) {
+      showToast(getString('newMoon.settings.migrated'));
+    }
+  }, []);
 
   const openBottomSheet = () => {
     bottomSheetRef.current?.present();
@@ -92,15 +106,15 @@ const SettingsReaderScreen = () => {
     ({ route }: { route: ReaderSettingsRoute }) => {
       switch (route.key) {
         case 'display':
-          return <DisplayTab />;
+          return <WorDisplayTab />;
         case 'theme':
-          return <ThemeTab />;
+          return <WorThemeTab />;
         case 'navigation':
-          return <NavigationTab />;
+          return <WorNavigationTab />;
         case 'accessibility':
-          return <AccessibilityTab />;
+          return <WorAccessibilityTab />;
         default:
-          return <DisplayTab />;
+          return <WorDisplayTab />;
       }
     },
     [],
@@ -134,10 +148,7 @@ const SettingsReaderScreen = () => {
   );
 
   return (
-    <SafeAreaView
-      excludeTop
-      style={[styles.container, { backgroundColor: readerBackgroundColor }]}
-    >
+    <SafeAreaView excludeTop style={styles.container}>
       <Appbar
         mode="small"
         title={getString('readerSettings.title')}
@@ -145,12 +156,10 @@ const SettingsReaderScreen = () => {
         theme={theme}
       />
 
-      {/* Reader-engine switch (New-moon ⟷ Classic) — applies next chapter open */}
-      <EngineSelector />
-
-      {/* Large Preview Area */}
+      {/* Real New Moon engine preview — the worShell itself, live-bound to
+          the same settings store the reader uses. */}
       <View style={styles.previewContainer}>
-        <SettingsReaderWebView />
+        <WorPreview />
       </View>
 
       {/* Floating Action Button to Open Bottom Sheet */}
@@ -171,7 +180,7 @@ const SettingsReaderScreen = () => {
       {/* Bottom Sheet with Tabs */}
       <BottomSheet
         bottomSheetRef={bottomSheetRef}
-        snapPoints={[BOTTOM_SHEET_HEIGHT]}
+        snapPoints={[BOTTOM_SHEET_HEIGHT(screenHeight)]}
       >
         <View style={styles.bottomSheetContent}>
           <TabView
@@ -190,6 +199,8 @@ const SettingsReaderScreen = () => {
     </SafeAreaView>
   );
 };
+
+const BOTTOM_SHEET_HEIGHT = (screenHeight: number) => screenHeight * 0.7;
 
 export default SettingsReaderScreen;
 
