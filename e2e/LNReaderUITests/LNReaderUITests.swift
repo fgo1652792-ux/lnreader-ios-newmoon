@@ -104,15 +104,29 @@ final class LNReaderUITests: XCTestCase {
   }
 
   private func tapWhenReady(_ labels: [String], _ timeout: TimeInterval = 20,
-                            _ message: String) {
+                            _ message: String, scroll: Bool = false) {
     let deadline = Date().addingTimeInterval(timeout)
+    var swipes = 0
     while Date() < deadline {
       if let element = tappable(labels) {
         element.tap()
         return
       }
+      // Long settings lists prune/prune-clip off-screen rows from the AX
+      // tree on iOS 26 — alternate swipes while searching (bounded by the
+      // same deadline; three down-swipes after four up-swipes recover).
+      if scroll {
+        if swipes < 4 {
+          app.swipeUp()
+        } else if swipes < 7 {
+          app.swipeDown()
+        }
+        swipes += 1
+      }
       sleep(1)
     }
+    // Leave the AX tree behind as evidence before failing.
+    dumpAXTree("ax-tree-\(message.replacingOccurrences(of: " ", with: "-"))")
     XCTFail("UI gate failed: \(message)")
   }
 
@@ -125,6 +139,7 @@ final class LNReaderUITests: XCTestCase {
       }
       sleep(1)
     }
+    dumpAXTree("ax-tree-\(message.replacingOccurrences(of: " ", with: "-"))")
     XCTFail("UI gate failed: \(message)")
   }
 
@@ -168,12 +183,12 @@ final class LNReaderUITests: XCTestCase {
 
     // 3) More -> Settings.
     tapWhenReady(["More", "المزيد"], 15, "More tab missing")
-    tapWhenReady(["Settings", "الإعدادات"], 20, "Settings row missing")
+    tapWhenReady(["Settings", "الإعدادات"], 20, "Settings row missing", scroll: true)
     screenshot("03-settings")
 
     // 4) Appearance -> App language -> العربية -> Apply now (runtime reload).
-    tapWhenReady(["Appearance", "مظهر"], 20, "Appearance row missing")
-    tapWhenReady(["App language", "لغة التطبيق"], 20, "language row missing")
+    tapWhenReady(["Appearance", "مظهر"], 20, "Appearance row missing", scroll: true)
+    tapWhenReady(["App language", "لغة التطبيق"], 20, "language row missing", scroll: true)
     tapWhenReady(["العربية"], 15, "Arabic option missing")
     tapWhenReady(["Apply now", "تطبيق الآن"], 15, "apply-now dialog missing")
     waitExists(
@@ -184,8 +199,8 @@ final class LNReaderUITests: XCTestCase {
     // 5) More -> Settings -> Reader (Arabic UI): live New Moon preview
     // (real worShell engine in a WebView, batch-1 settings rewrite).
     tapWhenReady(["المزيد", "More"], 20, "More tab (AR) missing")
-    tapWhenReady(["الإعدادات", "Settings"], 20, "Settings row (AR) missing")
-    tapWhenReady(["القارئ", "Reader"], 20, "Reader settings row missing")
+    tapWhenReady(["الإعدادات", "Settings"], 20, "Settings row (AR) missing", scroll: true)
+    tapWhenReady(["القارئ", "Reader"], 20, "Reader settings row missing", scroll: true)
     let preview = element(withIdentifier: "wor-reader-preview")
     waitExists(preview, 40, "reader preview did not load")
     sleep(3)
@@ -203,7 +218,7 @@ final class LNReaderUITests: XCTestCase {
 
     // 7) Theme tab -> THEME_CYCLE preset tap applies instantly (live
     // settings pipeline into the shell without reloading the document).
-    tapWhenReady(["السمة", "Theme"], 15, "Theme tab missing")
+    tapWhenReady(["السمة", "Theme"], 15, "Theme tab missing", scroll: true)
     sleep(1)
     tapWhenReady(["أسود", "Black"], 15, "black theme preset missing")
     sleep(2)
@@ -227,7 +242,7 @@ final class LNReaderUITests: XCTestCase {
       tapWhenReady(["History", "السجل"], 15, "History tab missing")
       tapWhenReady(["More", "المزيد"], 15, "More tab missing")
     }
-    tapWhenReady(["Settings", "الإعدادات"], 20, "Settings row missing")
+    tapWhenReady(["Settings", "الإعدادات"], 20, "Settings row missing", scroll: true)
     app.swipeUp()
     app.swipeDown()
     screenshot("10-stress-navigation")
@@ -259,9 +274,9 @@ final class LNReaderUITests: XCTestCase {
     // a previous test has not already applied it.
     if tappable(["المكتبة"]) == nil {
       tapWhenReady(["More", "المزيد"], 15, "More tab missing")
-      tapWhenReady(["Settings", "الإعدادات"], 20, "Settings row missing")
-      tapWhenReady(["Appearance", "مظهر"], 20, "Appearance row missing")
-      tapWhenReady(["App language", "لغة التطبيق"], 20, "language row missing")
+      tapWhenReady(["Settings", "الإعدادات"], 20, "Settings row missing", scroll: true)
+      tapWhenReady(["Appearance", "مظهر"], 20, "Appearance row missing", scroll: true)
+      tapWhenReady(["App language", "لغة التطبيق"], 20, "language row missing", scroll: true)
       tapWhenReady(["العربية"], 15, "Arabic option missing")
       tapWhenReady(["Apply now", "تطبيق الآن"], 15, "apply-now dialog missing")
       waitExists(
