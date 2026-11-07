@@ -842,6 +842,7 @@ export interface StringMap {
   'newMoon.noNextChapter': 'string';
   'newMoon.noPreviousChapter': 'string';
   'newMoon.novelDetails': 'string';
+  'newMoon.openMenu': 'string';
   'newMoon.ttsPlay': 'string';
   'newMoon.ttsStop': 'string';
   'newMoon.wordAdded': 'string';

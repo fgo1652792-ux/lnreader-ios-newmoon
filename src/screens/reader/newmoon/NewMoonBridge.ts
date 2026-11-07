@@ -65,6 +65,31 @@ export const shouldResendChapterOnReady = (
 ): boolean => chapterSentEpoch !== docEpoch;
 
 /**
+ * Shallow diff of two WOR settings records → patch of the keys whose value
+ * changed. Pure — used by the reader's focus-refresh: when the user returns
+ * from the ReaderSettings screen (which pushes on the ROOT stack while the
+ * reader stays mounted underneath), the reader re-reads the persisted
+ * settings and adopts ONLY the changed keys through the bridge 'settings'
+ * message (needsStructuralRebuild then decides about a keep-scroll rebuild).
+ *
+ * Every SETTINGS_KEYS value is a primitive (number/string/boolean), so
+ * Object.is equality is exact here; a hypothetical object value would simply
+ * always be reported as changed (safe over-reporting, never a missed change).
+ */
+export const diffSettingsPatch = (
+  next: Record<string, unknown>,
+  prev: Record<string, unknown>,
+): Record<string, unknown> => {
+  const patch: Record<string, unknown> = {};
+  Object.keys(next).forEach(key => {
+    if (!Object.is(next[key], prev[key])) {
+      patch[key] = next[key];
+    }
+  });
+  return patch;
+};
+
+/**
  * react-native-webview's default generic (P = undefined) collapses
  * `WebViewProps & P` to never, which poisons JSX overload resolution for
  * anyone holding that ref. Every ref in this feature is typed with the

@@ -75,6 +75,7 @@ import {
 import { htmlToWorText } from '../../../reader/newmoon/htmlToWorText';
 import {
   NewMoonBridge,
+  diffSettingsPatch,
   parseShellEvent,
   shouldResendChapterOnReady,
   type WebViewHandle,
@@ -230,14 +231,20 @@ const NewMoonReaderScreen = ({
   const [keepAwake, setKeepAwake] = useState(
     initialSettings.keepAwake === true,
   );
+  /** Theme snapshot for the NATIVE chrome around the WebView (loading
+   *  overlay, native bar, WebView backing color). Mount snapshot by default;
+   *  refreshed ONLY by the focus-adopt path below (returning from the
+   *  settings screen). Runtime shell patches never touch it — color-picking
+   *  inside the shell must not re-render the RN tree. */
+  const [uiSettings, setUiSettings] = useState(initialSettings);
 
   const shellTheme = useMemo(() => {
-    const light = isLightColor(initialSettings.bgColor);
+    const light = isLightColor(uiSettings.bgColor);
     return {
-      background: initialSettings.bgColor,
+      background: uiSettings.bgColor,
       foreground: light ? '#1c1c1c' : '#f3f3f3',
     };
-  }, [initialSettings]);
+  }, [uiSettings]);
 
   /** MOUNT-TIME safe-area snapshot (lazy initial state — evaluated exactly
    *  once, stable identity for the screen's lifetime). Status-bar show/hide
@@ -913,27 +920,60 @@ const NewMoonReaderScreen = ({
   );
 
   // ------------------------------------------------------------ settings ---
-  const applySettingsPatch = useCallback((patch: Record<string, unknown>) => {
-    // Engine parity: the rebuild decision compares the patch against the
-    // CURRENT settings and must run BEFORE the merge (WorReader.tsx
-    // computes needsRebuild first, then applies the patch).
-    const needsRebuild = needsStructuralRebuild(
-      patch,
+  const applySettingsPatch = useCallback(
+    (
+      patch: Record<string, unknown>,
+      /** persist:false = the values came FROM the store (focus-adopt path);
+       *  re-saving an identical patch would be a no-op write — skip it. */
+      opts?: { persist?: boolean },
+    ) => {
+      // Engine parity: the rebuild decision compares the patch against the
+      // CURRENT settings and must run BEFORE the merge (WorReader.tsx
+      // computes needsRebuild first, then applies the patch).
+      const needsRebuild = needsStructuralRebuild(
+        patch,
+        settingsRef.current as unknown as Record<string, unknown>,
+      );
+      settingsRef.current = {
+        ...settingsRef.current,
+        ...patch,
+      } as WorReaderSettings;
+      if (opts?.persist !== false) {
+        saveWorSettingsPatch(patch);
+      }
+      bridgeRef.current.post({ kind: 'settings', settings: patch });
+      if (typeof patch.keepAwake === 'boolean') {
+        setKeepAwake(patch.keepAwake);
+      }
+      if (needsRebuild) {
+        rebuildCurrentRef.current();
+      }
+    },
+    [],
+  );
+
+  /**
+   * Focus-adopt: ReaderSettings pushes on the ROOT stack while this screen
+   * stays mounted underneath, so the live settingsRef does NOT see the
+   * user's changes until the reader regains focus. On 'focus' re-read the
+   * persisted WOR settings and adopt the diff: only changed keys travel
+   * through the bridge 'settings' message (needsStructuralRebuild inside
+   * applySettingsPatch keeps the scroll on structural changes) and the
+   * native chrome (loading overlay / native bar) follows the new theme.
+   * A no-op diff (normal in-reader focus changes) touches nothing.
+   */
+  const adoptPersistedSettings = useCallback(() => {
+    const fresh = loadWorSettings() as unknown as Record<string, unknown>;
+    const patch = diffSettingsPatch(
+      fresh,
       settingsRef.current as unknown as Record<string, unknown>,
     );
-    settingsRef.current = {
-      ...settingsRef.current,
-      ...patch,
-    } as WorReaderSettings;
-    saveWorSettingsPatch(patch);
-    bridgeRef.current.post({ kind: 'settings', settings: patch });
-    if (typeof patch.keepAwake === 'boolean') {
-      setKeepAwake(patch.keepAwake);
+    if (!Object.keys(patch).length) {
+      return;
     }
-    if (needsRebuild) {
-      rebuildCurrentRef.current();
-    }
-  }, []);
+    applySettingsPatch(patch, { persist: false });
+    setUiSettings({ ...settingsRef.current });
+  }, [applySettingsPatch]);
 
   const handleThemeCycle = useCallback(() => {
     const S = settingsRef.current;
@@ -977,6 +1017,53 @@ const NewMoonReaderScreen = ({
     flushScrollSave();
     navigation.goBack();
   }, [flushScrollSave, navigation]);
+
+  // ------------------------------------- drawer nav targets (cross-stack) ---
+  /** Drawer «الرئيسية»: leave the reader entirely and land on the app's home
+   *  (Library tab). The reader lives on a NESTED stack (RootStack →
+   *  ReaderStack → Chapter), so navigation.popToTop() here would only pop
+   *  back to the Novel screen inside ReaderStack. Navigating to the
+   *  root-level BottomNavigator with {screen:'Library'} makes StackRouter
+   *  pop the EXISTING tabs route (unmounting ReaderStack — one action, no
+   *  dead-screen dispatch) and the params switch the active tab to Library
+   *  regardless of which tab was open when the reader was entered.
+   *  allowRemoveRef first: beforeRemove must NOT preventDefault this. */
+  const exitToLibrary = useCallback(() => {
+    allowRemoveRef.current = true;
+    flushScrollSave();
+    navigation.navigate('BottomNavigator', { screen: 'Library' });
+  }, [flushScrollSave, navigation]);
+
+  /** Drawer «التنزيلات» / «حول التطبيق»: MoreStack screens registered in
+   *  RootStack. Standard navigate PUSHES on the root stack, so the reader
+   *  stays mounted underneath (document, scroll and bridge state survive
+   *  the round-trip — beforeRemove does not fire for pushes). */
+  const pushMoreScreen = useCallback(
+    (screen: 'Downloads' | 'About') => {
+      flushScrollSave();
+      navigation.navigate('MoreStack', { screen });
+    },
+    [flushScrollSave, navigation],
+  );
+
+  /** Drawer «الإعدادات» → the reader settings screen (controls the New Moon
+   *  engine directly). Pushed on the root stack, reader stays mounted; on
+   *  return the 'focus' listener (adoptPersistedSettings) pulls the changed
+   *  settings back into the live engine. */
+  const pushReaderSettings = useCallback(() => {
+    flushScrollSave();
+    navigation.navigate('MoreStack', {
+      screen: 'SettingsStack',
+      params: { screen: 'ReaderSettings' },
+    });
+  }, [flushScrollSave, navigation]);
+
+  /** Native-bar menu button ⇄ the shell drawer. The engine's own topbar
+   *  (drawer trigger) was replaced by this native bar, so the drawer is
+   *  toggled through the bridge; the shell side opens OR closes it. */
+  const toggleShellDrawer = useCallback(() => {
+    bridgeRef.current.post({ kind: 'drawer' });
+  }, []);
 
   // ------------------------------------------------- shell → RN dispatch ---
   const handleShellEventRef = useRef<(event: Record<string, unknown>) => void>(
@@ -1124,8 +1211,17 @@ const NewMoonReaderScreen = ({
             }
           } else if (event.to === 'novel') {
             goBackToNovel();
+          } else if (event.to === 'home') {
+            exitToLibrary();
+          } else if (event.to === 'downloads') {
+            pushMoreScreen('Downloads');
+          } else if (event.to === 'settings') {
+            pushReaderSettings();
+          } else if (event.to === 'about') {
+            pushMoreScreen('About');
           }
-          // 'home' | 'downloads' | 'settings' | 'contact' | 'about' → no-op
+          // 'contact' → the New-moon-2 website contact form; the drawer link
+          // was REMOVED from the shell (no contact backend in LNReader).
           break;
         }
         case 'goto':
@@ -1336,6 +1432,14 @@ const NewMoonReaderScreen = ({
     return unsubscribe;
   }, [flushScrollSave, navigation]);
 
+  // Settings screen round-trip: adopting on 'focus' (NOT on blur — the
+  // settings screen may still be writing while the reader is blurred; the
+  // final values are read when the reader becomes the active screen again).
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', adoptPersistedSettings);
+    return unsubscribe;
+  }, [adoptPersistedSettings, navigation]);
+
   // Flush the very last position when leaving the reader.
   useEffect(
     () => () => {
@@ -1357,8 +1461,8 @@ const NewMoonReaderScreen = ({
 
   // ------------------------------------------------------------- render ---
   const webViewBackground = useMemo(
-    () => (isLightColor(initialSettings.bgColor) ? '#f3efe7' : '#000000'),
-    [initialSettings],
+    () => (isLightColor(uiSettings.bgColor) ? '#f3efe7' : '#000000'),
+    [uiSettings],
   );
 
   return (
@@ -1458,6 +1562,15 @@ const NewMoonReaderScreen = ({
             accessibilityLabel={getString(
               ttsPlaying ? 'newMoon.ttsStop' : 'newMoon.ttsPlay',
             )}
+          />
+          <IconButtonV2
+            name="menu"
+            size={22}
+            color={shellTheme.foreground}
+            theme={theme}
+            padding={6}
+            onPress={toggleShellDrawer}
+            accessibilityLabel={getString('newMoon.openMenu')}
           />
         </View>
       ) : null}

@@ -1,9 +1,10 @@
 import { getString } from '@i18n/translations';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MaterialCommunityIcons from '@react-native-vector-icons/material-design-icons';
 
 import { ThemeColors } from '@theme/types';
+import { detectTextDirection } from '@utils/textDirection';
 
 interface NovelSummaryProps {
   summary: string;
@@ -29,6 +30,23 @@ const NovelSummary: React.FC<NovelSummaryProps> = ({
   const containerBottomPadding = expanded ? 24 : 8;
   const opacity = expanded ? 1 : 0.7;
 
+  // The summary language is independent of the UI language: an Arabic novel
+  // opened in an English UI (and vice versa) must render with its own
+  // writing direction and paragraph alignment. An empty summary falls back
+  // to the UI locale direction via detectTextDirection('').
+  const direction = useMemo(() => detectTextDirection(summary), [summary]);
+  const summaryTextStyle = useMemo(
+    () => [
+      styles.summaryText,
+      {
+        color: textColor,
+        textAlign: direction === 'rtl' ? ('right' as const) : ('left' as const),
+        writingDirection: direction,
+      },
+    ],
+    [textColor, direction],
+  );
+
   return (
     <Pressable
       style={[
@@ -38,7 +56,7 @@ const NovelSummary: React.FC<NovelSummaryProps> = ({
       onPress={toggleExpanded}
     >
       <Text
-        style={[styles.summaryText, { color: textColor }]}
+        style={summaryTextStyle}
         numberOfLines={expanded ? Number.MAX_SAFE_INTEGER : 3}
       >
         {summary || getString('novelScreen.noSummary')}
@@ -54,6 +72,9 @@ const NovelSummary: React.FC<NovelSummaryProps> = ({
             },
           ]}
         >
+          {/* Expand/collapse affordance: chevrons point up/down, which is
+              direction-neutral, so the icon needs no RTL mirroring. The
+              centered overlay (left/right = 0) is symmetric by design. */}
           <MaterialCommunityIcons
             name={expanded ? 'chevron-up' : 'chevron-down'}
             color={theme.onBackground}

@@ -154,5 +154,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconButton: { margin: 2 },
-  iconButtonLeft: { marginLeft: 2 },
+  // Bookmark button sits at the row start; use the logical edge so the
+  // spacing stays on the correct side in RTL layouts.
+  iconButtonLeft: { marginStart: 2 },
 });

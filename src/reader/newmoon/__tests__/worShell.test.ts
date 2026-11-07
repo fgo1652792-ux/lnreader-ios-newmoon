@@ -102,3 +102,38 @@ describe('buildWorShell — document shape sanity', () => {
     expect(html).toContain("send({ t: 'ready' })");
   });
 });
+
+describe('buildWorShell — drawer nav targets (LNReader-mapped)', () => {
+  it('keeps every drawer link the parent maps to a real screen', () => {
+    const html = build();
+    ['novel', 'home', 'downloads', 'settings', 'about'].forEach(target => {
+      expect(html).toContain(`data-wor-nav="${target}"`);
+    });
+  });
+
+  it('emits NO contact link (New-moon-2 site-only form, no backend here)', () => {
+    const html = build();
+    expect(html).not.toContain('data-wor-nav="contact"');
+    expect(html).not.toContain('تواصل معنا');
+  });
+
+  it('registers the drawer toggle command (native-bar menu button)', () => {
+    // The engine topbar (drawer trigger) was replaced by the RN native bar —
+    // the drawer must still be reachable through the bridge 'drawer' command.
+    const html = build();
+    expect(html).toContain("kind === 'drawer'");
+    expect(html).toContain('openDrawer()');
+  });
+
+  it('emits zero comments/report/tool senders (markup removed in the port)', () => {
+    const html = build();
+    expect(html).not.toContain("t: 'comments'");
+    expect(html).not.toContain("t: 'report'");
+    expect(html).not.toContain("t: 'tool'");
+    // Admin tools card removed outright — no account system, so its two
+    // admin buttons could never be visible or wired.
+    expect(html).not.toContain('data-wor-tool="');
+    expect(html).not.toContain('data-wor-admin-tools');
+    expect(html).not.toContain('أدوات المدير');
+  });
+});

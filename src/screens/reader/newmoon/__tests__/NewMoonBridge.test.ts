@@ -8,6 +8,7 @@
 
 import {
   NewMoonBridge,
+  diffSettingsPatch,
   shouldResendChapterOnReady,
   toInjectableLiteral,
   type ShellCommand,
@@ -130,5 +131,44 @@ describe('toInjectableLiteral (bridge transport safety)', () => {
     const literal = toInjectableLiteral({ kind: 'chapter', title: 'أ\u2028ب' });
     expect(literal).toContain('\\u2028');
     expect(JSON.parse(literal).title).toBe('أ\u2028ب');
+  });
+});
+
+describe('diffSettingsPatch (focus-adopt diff after the settings screen)', () => {
+  it('reports only the keys whose value changed', () => {
+    const prev = {
+      fontSize: 18,
+      bgColor: '#000000',
+      continuousMode: false,
+      fontWeight: 400,
+    };
+    const next = {
+      fontSize: 22,
+      bgColor: '#000000', // unchanged
+      continuousMode: true,
+      fontWeight: 400, // unchanged
+    };
+    expect(diffSettingsPatch(next, prev)).toEqual({
+      fontSize: 22,
+      continuousMode: true,
+    });
+  });
+
+  it('returns an empty patch when the reader is already in sync', () => {
+    const settings = { fontSize: 18, bgColor: '#111111', keepAwake: true };
+    expect(diffSettingsPatch(settings, { ...settings })).toEqual({});
+  });
+
+  it('compares with Object.is semantics (0/-0, NaN)', () => {
+    expect(diffSettingsPatch({ n: 0 }, { n: -0 })).toEqual({ n: 0 });
+    expect(diffSettingsPatch({ n: NaN }, { n: NaN })).toEqual({});
+  });
+
+  it('treats string/number coercions as changes (strict equality)', () => {
+    // '18' !== 18 — the settings screen writes the same types the reader
+    // stores, but a corrupted store value must still be reported and adopted.
+    expect(diffSettingsPatch({ fontSize: 18 }, { fontSize: '18' })).toEqual({
+      fontSize: 18,
+    });
   });
 });

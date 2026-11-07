@@ -9,6 +9,7 @@ import { ChapterInfo } from '@database/types';
 import MaterialCommunityIcons from '@react-native-vector-icons/material-design-icons';
 import { getString } from '@i18n/translations';
 import { DateFormat, formatDate } from '@utils/dateFormat';
+import { detectTextDirection } from '@utils/textDirection';
 
 interface ChapterItemProps {
   chapter: ChapterInfo;
@@ -99,6 +100,23 @@ const ChapterItem: React.FC<ChapterItemProps> = ({
     [theme.rippleColor],
   );
 
+  // Chapter names (and novel names in grouped rows) follow the content
+  // language, not the UI language, so their writing direction must be
+  // detected from the displayed string.
+  const chapterTitleText = showChapterTitles
+    ? name
+    : getString('novelScreen.chapterChapnum', {
+        num: chapterNumber,
+      });
+  const titleWritingDirection = useMemo(
+    () => detectTextDirection(chapterTitleText),
+    [chapterTitleText],
+  );
+  const novelNameWritingDirection = useMemo(
+    () => detectTextDirection(novelName),
+    [novelName],
+  );
+
   const releaseTimeStyle = {
     color: theme.outline,
     marginStart: chapter.releaseTime || chapter.scanlator ? 5 : 0,
@@ -126,6 +144,7 @@ const ChapterItem: React.FC<ChapterItemProps> = ({
                 style={[
                   styles.groupedChapterNovelName,
                   { color: unread ? theme.onSurface : theme.outline },
+                  { writingDirection: novelNameWritingDirection },
                 ]}
                 numberOfLines={1}
               >
@@ -147,15 +166,12 @@ const ChapterItem: React.FC<ChapterItemProps> = ({
                   isGrouped ? styles.textSmall : styles.textNormal,
                   { color: titleColor },
                   styles.flex1,
+                  { writingDirection: titleWritingDirection },
                 ]}
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
-                {showChapterTitles
-                  ? name
-                  : getString('novelScreen.chapterChapnum', {
-                      num: chapterNumber,
-                    })}
+                {chapterTitleText}
               </Text>
             </View>
             <View style={styles.metaRow}>

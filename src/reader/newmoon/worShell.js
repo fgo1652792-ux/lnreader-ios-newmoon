@@ -10,8 +10,15 @@
 //       surgically removed (no comment/report backend in LNReader). Their
 //       defensive handlers are no-ops and dead CSS selectors were left in the
 //       untouched bundles where removal would have required larger edits.
-//   (c) Admin tools card stays hidden: the parent passes userRole: ''.
+//   (c) The admin-tools card (and its data-wor-tool senders) was removed
+//       outright — no account system in LNReader, so it could never become
+//       visible (the parent passes userRole: '', now only used for the
+//       drawer's guest user display).
 //   (d) No localStorage/sessionStorage is used inside the shell (audited).
+//   (e) The engine topbar (drawer/search/theme triggers) was replaced by the
+//       RN native bar — the drawer is now opened through the bridge 'drawer'
+//       command (menu button in the native bar); the site-only «تواصل معنا»
+//       drawer link was removed (no contact backend in LNReader).
 //
 // The DOM structure, class names and interactions mirror the original
 // galaxynovels.com reader (wor-reader theme) one-to-one:
@@ -293,7 +300,6 @@ function bridgeScript() {
   'use strict';
   // ============================ state ============================
   var S = '__WOR_SETTINGS__';
-  var USER = '__WOR_USER__';
   var FONTS = '__WOR_FONTS__';
   var BG_PRESETS = '__WOR_BG_PRESETS__';
   var CH = null;
@@ -1532,10 +1538,7 @@ function bridgeScript() {
       applyProgressBar();
       send({ t: 'settings', patch: { showProgressBar: S.showProgressBar !== false } });
     });
-    // admin tools
-    $all('[data-wor-tool]').forEach(function (b) {
-      b.addEventListener('click', function () { send({ t: 'tool', tool: b.getAttribute('data-wor-tool') }); });
-    });
+    // PORT EDIT: [data-wor-tool] admin-tools wiring removed with the card.
     // scroll / touch
     window.addEventListener('scroll', onScroll, { passive: true });
     // Size changes (rotation, font loading, toolbars) move every section top —
@@ -1705,6 +1708,15 @@ function bridgeScript() {
         else if (drawer && drawer.classList.contains('is-open')) closeDrawer();
         else send({ t: 'exit' });
       }
+      else if (kind === 'drawer') {
+        // PORT ADDITION: the engine topbar (drawer trigger) was replaced by
+        // the RN native bar — the parent toggles the drawer through this
+        // command (menu button). Toggle semantics: the in-shell backdrop
+        // cannot cover the native bar, so the parent cannot tap it closed.
+        var dToggle = $('#wor-drawer');
+        if (dToggle && dToggle.classList.contains('is-open')) closeDrawer();
+        else openDrawer();
+      }
       else if (kind === 'toast') toast(msg.text || '');
       else if (kind === 'viewport') {
         // Live safe-area updates from the parent (rotation, status-bar
@@ -1799,10 +1811,8 @@ function bridgeScript() {
     if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
       document.fonts.ready.then(function () { invalidateSectionTops(); }).catch(function () {});
     }
-    if (USER.role === 'admin') {
-      var adm = $('[data-wor-admin-tools]');
-      adm && adm.removeAttribute('hidden');
-    }
+    // PORT EDIT: the USER.role==='admin' unhide branch was removed with the
+    // admin tools card (no account system in LNReader).
     send({ t: 'ready' });
     var loader = $('#worBootLoading');
     setTimeout(function () { loader && loader.classList.add('is-done'); }, 200);
@@ -1860,7 +1870,6 @@ export function buildWorShell({
   fontsBase = '',
 }) {
   const settingsJson = safeJson({ ...initialSettings, safeTop, safeBottom });
-  const userJson = safeJson({ name: userName || '', role: userRole || '' });
   const fontsJson = safeJson(WOR_FONTS);
   const presetsJson = safeJson(WOR_BG_PRESETS);
   const title = escHtml(novelTitle);
@@ -1869,8 +1878,6 @@ export function buildWorShell({
   const script = bridgeScript()
     .split("'__WOR_SETTINGS__'")
     .join(settingsJson)
-    .split("'__WOR_USER__'")
-    .join(userJson)
     .split("'__WOR_FONTS__'")
     .join(fontsJson)
     .split("'__WOR_BG_PRESETS__'")
@@ -1929,7 +1936,8 @@ export function buildWorShell({
     <a href="#" data-wor-nav="home"><span>الرئيسية</span></a>
     <a href="#" data-wor-nav="downloads"><span>التنزيلات</span></a>
     <a href="#" data-wor-nav="settings"><span>الإعدادات</span></a>
-    <a href="#" data-wor-nav="contact"><span>تواصل معنا</span></a>
+    <!-- PORT EDIT: the site-only contact-form drawer link was removed here
+         (New-moon-2 website contact — no contact backend in LNReader). -->
     <a href="#" data-wor-nav="about"><span>حول التطبيق</span></a>
   </nav>
 </aside>
@@ -2248,20 +2256,9 @@ export function buildWorShell({
           <button type="button" class="wor-reader-switch is-active" data-wor-switch="taptoggle">مفعّل</button>
         </div>
       </div>
-      <div class="wor-reader-extra-card wor-reader-extra-card--compact" data-wor-admin-tools hidden>
-        <div class="wor-reader-extra-card__head">
-          <h3>أدوات المدير</h3>
-        </div>
-        <p>أدوات إدارية خاصة بفريق التطبيق.</p>
-        <div class="wor-reader-dock__actions" style="margin-top:10px">
-          <button class="wor-reader-dock__action" type="button" data-wor-tool="cleaner">
-            <strong>الحذف الشامل</strong>
-          </button>
-          <button class="wor-reader-dock__action" type="button" data-wor-tool="copyright">
-            <strong>حقوق التطبيق</strong>
-          </button>
-        </div>
-      </div>
+      <!-- PORT EDIT: the admin tools card (two data-wor-tool buttons behind
+           a hidden, admin-only wrapper) was removed — no account system in
+           LNReader, so the buttons could never be visible or wired. -->
     </div>
   </div>
 

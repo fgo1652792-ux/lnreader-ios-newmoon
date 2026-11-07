@@ -217,7 +217,7 @@ const NovelInfoHeader = ({
                       name="fountain-pen-tip"
                       size={14}
                       color={theme.onSurfaceVariant}
-                      style={styles.marginRight}
+                      style={styles.marginEnd}
                     />
                     <NovelInfo theme={theme}>{novel.author}</NovelInfo>
                   </Row>
@@ -228,7 +228,7 @@ const NovelInfoHeader = ({
                       name="palette-outline"
                       size={14}
                       color={theme.onSurfaceVariant}
-                      style={styles.marginRight}
+                      style={styles.marginEnd}
                     />
                     <NovelInfo theme={theme}>{novel.artist}</NovelInfo>
                   </Row>
@@ -238,7 +238,7 @@ const NovelInfoHeader = ({
                     name={getStatusIcon(novelStatus)}
                     size={14}
                     color={theme.onSurfaceVariant}
-                    style={styles.marginRight}
+                    style={styles.marginEnd}
                   />
                   <NovelInfo theme={theme}>
                     {(novelStatus
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingRight: 12,
+    paddingEnd: 12,
     paddingVertical: 8,
   },
   bottomsheetContainer: {
@@ -339,13 +339,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   flex: { flex: 1 },
-  marginRight: { marginRight: 4 },
+  // Logical (start/end) spacing so the icon/text order follows the layout
+  // direction instead of staying glued to the physical right side in RTL.
+  marginEnd: { marginEnd: 4 },
   novelDetails: {
     flex: 1,
     flexDirection: 'column',
     justifyContent: 'center',
     paddingBottom: 16,
-    paddingLeft: 12,
+    paddingStart: 12,
   },
   infoRow: {
     marginBottom: 8,

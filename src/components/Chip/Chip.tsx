@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ThemeColors } from '../../theme/types';
+import { detectTextDirection } from '../../utils/textDirection';
 
 interface ChipProps {
   label: string;
@@ -26,6 +27,8 @@ const Chip: React.FC<ChipProps> = ({ label, theme }) => (
           styles.label,
           {
             color: theme.onSecondaryContainer,
+            // Genre names follow the content language, not the UI language.
+            writingDirection: detectTextDirection(label),
           },
         ]}
       >

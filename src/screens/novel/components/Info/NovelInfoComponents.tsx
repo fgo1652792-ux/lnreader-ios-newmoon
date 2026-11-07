@@ -10,6 +10,7 @@ import { ThemeColors } from '@theme/types';
 import { getString } from '@i18n/translations';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseGenres } from '../../utils/genres';
+import { detectTextDirection } from '@utils/textDirection';
 
 interface CoverImageProps {
   children: React.ReactNode;
@@ -166,16 +167,28 @@ const NovelTitle = ({
   children,
   onLongPress,
   onPress,
-}: NovelTitleProps) => (
-  <Text
-    onLongPress={onLongPress}
-    onPress={onPress}
-    style={[{ color: theme.onBackground }, styles.novelTitle]}
-    numberOfLines={4}
-  >
-    {children}
-  </Text>
-);
+}: NovelTitleProps) => {
+  // The novel name's language is independent of the UI language.
+  const titleText = typeof children === 'string' ? children : undefined;
+  const writingDirection = useMemo(
+    () => detectTextDirection(titleText),
+    [titleText],
+  );
+
+  return (
+    <Text
+      onLongPress={onLongPress}
+      onPress={onPress}
+      style={[
+        { color: theme.onBackground, writingDirection },
+        styles.novelTitle,
+      ]}
+      numberOfLines={4}
+    >
+      {children}
+    </Text>
+  );
+};
 
 const NovelInfo = ({
   theme,
@@ -183,14 +196,27 @@ const NovelInfo = ({
 }: {
   theme: ThemeColors;
   children: React.ReactNode;
-}) => (
-  <Text
-    style={[{ color: theme.onSurfaceVariant }, styles.novelInfo]}
-    numberOfLines={1}
-  >
-    {children}
-  </Text>
-);
+}) => {
+  // Author/artist/status strings can be in any language (e.g. an Arabic
+  // author name in an English UI) — give them their content direction.
+  const infoText = typeof children === 'string' ? children : undefined;
+  const writingDirection = useMemo(
+    () => detectTextDirection(infoText),
+    [infoText],
+  );
+
+  return (
+    <Text
+      style={[
+        { color: theme.onSurfaceVariant, writingDirection },
+        styles.novelInfo,
+      ]}
+      numberOfLines={1}
+    >
+      {children}
+    </Text>
+  );
+};
 
 const FollowButton = ({
   theme,

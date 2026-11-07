@@ -84,13 +84,20 @@ const NovelScreenList = ({
     openPage,
   } = useNovelActions();
 
-  const routeNovel: Omit<NovelInfo, 'id'> & { id: 'NO_ID' } = {
-    inLibrary: false,
-    isLocal: false,
-    totalPages: 0,
-    ...routeBaseNovel,
-    id: 'NO_ID',
-  };
+  // Stable across re-renders: while the novel is still being fetched this
+  // placeholder is passed to memoized children (NovelInfoHeader and the
+  // memoized list header); recreating it per render used to defeat that
+  // memoization and re-render the whole header on every state tick.
+  const routeNovel: Omit<NovelInfo, 'id'> & { id: 'NO_ID' } = useMemo(
+    () => ({
+      inLibrary: false,
+      isLocal: false,
+      totalPages: 0,
+      ...routeBaseNovel,
+      id: 'NO_ID',
+    }),
+    [routeBaseNovel],
+  );
   const novel = fetchedNovel ?? routeNovel;
   const {
     useFabForContinueReading,
