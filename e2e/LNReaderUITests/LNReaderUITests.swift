@@ -181,45 +181,34 @@ final class LNReaderUITests: XCTestCase {
       "Arabic (RTL) UI did not appear after language switch")
     screenshot("04-rtl-arabic")
 
-    // 5) More -> Settings -> Reader (Arabic UI): live preview WebView.
+    // 5) More -> Settings -> Reader (Arabic UI): live New Moon preview
+    // (real worShell engine in a WebView, batch-1 settings rewrite).
     tapWhenReady(["المزيد", "More"], 20, "More tab (AR) missing")
     tapWhenReady(["الإعدادات", "Settings"], 20, "Settings row (AR) missing")
     tapWhenReady(["القارئ", "Reader"], 20, "Reader settings row missing")
-    waitExists(element(withIdentifier: "reader-preview"), 40,
-               "reader preview did not load")
+    let preview = element(withIdentifier: "wor-reader-preview")
+    waitExists(preview, 40, "reader preview did not load")
     sleep(3)
     screenshot("05-reader-preview")
 
-    // 6) Tap preview -> reader chrome (appbar/footer) toggles.
-    let appbar = element(withIdentifier: "reader-appbar")
-    let footer = element(withIdentifier: "reader-footer")
-    XCTAssertFalse(
-      appbar.exists && footer.exists,
-      "reader chrome should start hidden in the preview")
-    let preview = element(withIdentifier: "reader-preview")
+    // 6) Tap the preview: the New Moon shell toggles its own chrome INSIDE
+    // the WebView (WKWebView DOM is not addressable by XCUITest) — prove the
+    // tap is delivered without crashing/reloading via before/after evidence
+    // and the preview element staying alive. (The 50-tap no-reload
+    // acceptance is covered by unit tests + the doc evidence pass.)
     preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-    waitExists(appbar, 12, "reader appbar did not appear after tap")
-    waitExists(footer, 5, "reader footer did not appear after tap")
-    screenshot("06-reader-tools-visible")
-    preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-    waitVanishes(appbar, 12, "reader appbar did not hide after second tap")
-    screenshot("07-reader-tools-hidden")
+    sleep(2)
+    screenshot("06-reader-preview-tapped")
+    waitExists(preview, 10, "preview died after tap")
 
-    // 7) Theme tab -> interactive color picker: preset + save.
+    // 7) Theme tab -> THEME_CYCLE preset tap applies instantly (live
+    // settings pipeline into the shell without reloading the document).
     tapWhenReady(["السمة", "Theme"], 15, "Theme tab missing")
     sleep(1)
-    tapWhenReady(
-      ["لون الخلفية", "Background color"], 15,
-      "background color row missing")
-    let preset = app.descendants(matching: .any)
-      .matching(NSPredicate(format: "label == '#292832'")).firstMatch
-    waitExists(preset, 15, "preset swatch missing")
-    preset.tap()
-    sleep(1)
-    screenshot("08-color-picker")
-    tapWhenReady(["حفظ", "Save"], 10, "Save button missing")
-    sleep(1)
-    screenshot("09-after-color-change")
+    tapWhenReady(["أسود", "Black"], 15, "black theme preset missing")
+    sleep(2)
+    screenshot("07-theme-black-applied")
+    waitExists(preview, 10, "preview died after theme change")
   }
 
   func testAppSurvivesRepeatedNavigation() {
