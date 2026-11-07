@@ -68,11 +68,12 @@ jest.mock('react-native-edge-to-edge', () => ({
   SystemBars: { setHidden: jest.fn(), setStyle: jest.fn() },
 }));
 
+const mockNavigate = jest.fn();
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => ({
     goBack: jest.fn(),
     addListener: () => jest.fn(),
-    navigate: jest.fn(),
+    navigate: mockNavigate,
   }),
 }));
 
@@ -234,6 +235,76 @@ const injectedKinds = () =>
 const injectedChapters = () =>
   injectedKinds().filter(k => k === 'chapter').length;
 
+describe('NewMoonReaderScreen — drawer navigation wiring', () => {
+  beforeEach(() => {
+    captured.sources.length = 0;
+    captured.injected.length = 0;
+    captured.reloads = 0;
+    captured.props = null;
+    mockMem.clear();
+    mockInsets = { top: 59, bottom: 34 };
+    const NativeFile = require('@modules/native-file').default;
+    NativeFile.readFile.mockResolvedValue('<p>نص</p>');
+    const chapterQueries = require('@database/queries/ChapterQueries');
+    chapterQueries.markChapterRead.mockResolvedValue(undefined);
+    chapterQueries.updateChapterProgress.mockResolvedValue(undefined);
+    chapterQueries.getNovelChaptersByName.mockResolvedValue([]);
+    chapterQueries.getCustomPages.mockReturnValue([]);
+    chapterQueries.insertChapters.mockResolvedValue(undefined);
+    require('@database/queries/HistoryQueries').insertHistory.mockResolvedValue(
+      undefined,
+    );
+    require(
+      '@database/queries/NovelQueries',
+    ).switchNovelToLibraryQuery.mockResolvedValue(undefined);
+    const pluginFetch = require('@services/plugin/fetch');
+    pluginFetch.fetchChapter.mockResolvedValue('<p>فصل</p>');
+    pluginFetch.fetchPage.mockResolvedValue(null);
+    require(
+      '@screens/reader/utils/sanitizeChapterText',
+    ).sanitizeChapterText.mockImplementation(
+      (_p: unknown, _n: unknown, _c: unknown, html: unknown) => String(html),
+    );
+  });
+
+  it('routes every drawer nav target to a real app screen (no dead buttons)', async () => {
+    render(
+      <NewMoonReaderScreen
+        route={{ params: { novel, chapter } } as never}
+      />,
+    );
+    sendShell({ t: 'ready' });
+    await waitFor(() => expect(injectedChapters()).toBe(1));
+
+    sendShell({ t: 'nav', to: 'home' });
+    expect(mockNavigate).toHaveBeenCalledWith('BottomNavigator', {
+      screen: 'Library',
+    });
+
+    sendShell({ t: 'nav', to: 'downloads' });
+    expect(mockNavigate).toHaveBeenCalledWith('MoreStack', {
+      screen: 'Downloads',
+    });
+
+    sendShell({ t: 'nav', to: 'settings' });
+    expect(mockNavigate).toHaveBeenCalledWith('MoreStack', {
+      screen: 'SettingsStack',
+      params: { screen: 'Settings' },
+    });
+
+    sendShell({ t: 'nav', to: 'about' });
+    expect(mockNavigate).toHaveBeenCalledWith('MoreStack', { screen: 'About' });
+
+    // contact was removed from the shell — a stale message must not navigate
+    mockNavigate.mockClear();
+    sendShell({ t: 'nav', to: 'contact' });
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    // the document is still frozen after all that navigation
+    expect(captured.reloads).toBe(0);
+  });
+});
+
 describe('NewMoonReaderScreen — 50-tap document stability (P0)', () => {
   // restoreMocks wipes module-factory implementations between tests —
   // re-arm every async mock here.
@@ -245,6 +316,8 @@ describe('NewMoonReaderScreen — 50-tap document stability (P0)', () => {
     captured.props = null;
     mockMem.clear();
     mockInsets = { top: 59, bottom: 34 };
+
+    mockNavigate.mockClear();
 
     const NativeFile = require('@modules/native-file').default;
     NativeFile.readFile.mockResolvedValue('<p>نص الفصل للقراءة</p>');

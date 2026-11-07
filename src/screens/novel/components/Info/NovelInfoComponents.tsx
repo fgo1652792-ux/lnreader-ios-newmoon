@@ -10,6 +10,7 @@ import { ThemeColors } from '@theme/types';
 import { getString } from '@i18n/translations';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseGenres } from '../../utils/genres';
+import { directionStyleFor } from '@utils/textDirection';
 
 interface CoverImageProps {
   children: React.ReactNode;
@@ -170,7 +171,13 @@ const NovelTitle = ({
   <Text
     onLongPress={onLongPress}
     onPress={onPress}
-    style={[{ color: theme.onBackground }, styles.novelTitle]}
+    style={[
+      { color: theme.onBackground },
+      // Novel titles follow the text's own language (Arabic title → RTL),
+      // independent of the UI locale.
+      typeof children === 'string' ? directionStyleFor(children) : null,
+      styles.novelTitle,
+    ]}
     numberOfLines={4}
   >
     {children}
@@ -185,7 +192,11 @@ const NovelInfo = ({
   children: React.ReactNode;
 }) => (
   <Text
-    style={[{ color: theme.onSurfaceVariant }, styles.novelInfo]}
+    style={[
+      { color: theme.onSurfaceVariant },
+      typeof children === 'string' ? directionStyleFor(children) : null,
+      styles.novelInfo,
+    ]}
     numberOfLines={1}
   >
     {children}

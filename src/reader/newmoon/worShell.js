@@ -1913,7 +1913,6 @@ export function buildWorShell({
     <a href="#" data-wor-nav="home"><span>الرئيسية</span></a>
     <a href="#" data-wor-nav="downloads"><span>التنزيلات</span></a>
     <a href="#" data-wor-nav="settings"><span>الإعدادات</span></a>
-    <a href="#" data-wor-nav="contact"><span>تواصل معنا</span></a>
     <a href="#" data-wor-nav="about"><span>حول التطبيق</span></a>
   </nav>
 </aside>

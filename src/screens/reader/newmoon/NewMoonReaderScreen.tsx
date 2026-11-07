@@ -46,8 +46,9 @@ import { SystemBars } from 'react-native-edge-to-edge';
 import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, type NavigationProp } from '@react-navigation/native';
 import type { ChapterScreenProps } from '@navigators/types';
+import type { RootStackParamList } from '@navigators/types';
 
 import type { StringMap } from '@i18n/types';
 import { getString } from '@i18n/translations';
@@ -151,7 +152,7 @@ const NewMoonReaderScreen = ({
 }: {
   route: ChapterScreenProps['route'];
 }) => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const novel: NovelInfo = route.params.novel;
@@ -1045,8 +1046,22 @@ const NewMoonReaderScreen = ({
             }
           } else if (event.to === 'novel') {
             goBackToNovel();
+          } else if (event.to === 'home') {
+            // Drawer «الرئيسية» → the Library tab (app home).
+            navigation.navigate('BottomNavigator', { screen: 'Library' });
+          } else if (event.to === 'downloads') {
+            navigation.navigate('MoreStack', { screen: 'Downloads' });
+          } else if (event.to === 'settings') {
+            navigation.navigate('MoreStack', {
+              screen: 'SettingsStack',
+              params: { screen: 'Settings' },
+            });
+          } else if (event.to === 'about') {
+            navigation.navigate('MoreStack', { screen: 'About' });
           }
-          // 'home' | 'downloads' | 'settings' | 'contact' | 'about' → no-op
+          // 'contact' was removed from the shell drawer (site-specific, no
+          // mobile equivalent); the defensive break below covers any stale
+          // shell still sending it.
           break;
         }
         case 'goto':

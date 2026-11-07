@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MaterialCommunityIcons from '@react-native-vector-icons/material-design-icons';
 
 import { ThemeColors } from '@theme/types';
+import { directionStyleFor } from '@utils/textDirection';
 
 interface NovelSummaryProps {
   summary: string;
@@ -29,6 +30,10 @@ const NovelSummary: React.FC<NovelSummaryProps> = ({
   const containerBottomPadding = expanded ? 24 : 8;
   const opacity = expanded ? 1 : 0.7;
 
+  // The summary follows the TEXT's language (Arabic summaries read RTL with
+  // right alignment, English ones LTR) — the UI locale must not flip it.
+  const directionStyle = directionStyleFor(summary);
+
   return (
     <Pressable
       style={[
@@ -38,7 +43,11 @@ const NovelSummary: React.FC<NovelSummaryProps> = ({
       onPress={toggleExpanded}
     >
       <Text
-        style={[styles.summaryText, { color: textColor }]}
+        style={[
+          styles.summaryText,
+          directionStyle,
+          { color: textColor },
+        ]}
         numberOfLines={expanded ? Number.MAX_SAFE_INTEGER : 3}
       >
         {summary || getString('novelScreen.noSummary')}
