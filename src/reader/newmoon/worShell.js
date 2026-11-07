@@ -1706,6 +1706,22 @@ function bridgeScript() {
         else send({ t: 'exit' });
       }
       else if (kind === 'toast') toast(msg.text || '');
+      else if (kind === 'viewport') {
+        // Live safe-area updates from the parent (rotation, status-bar
+        // show/hide when the reader dock toggles). Applied ONLY as :root CSS
+        // custom properties — rebuilding this document would reload the
+        // WKWebView and destroy all reading state. Values are clamped and
+        // stored on S so a later applyTheme() (settings patch) keeps them.
+        var vpTop = parseInt(msg.safeTop, 10);
+        var vpBottom = parseInt(msg.safeBottom, 10);
+        if (isNaN(vpTop)) vpTop = 0;
+        if (isNaN(vpBottom)) vpBottom = 0;
+        S.safeTop = clamp(vpTop, 0, 200);
+        S.safeBottom = clamp(vpBottom, 0, 200);
+        var vpRoot = document.documentElement;
+        vpRoot.style.setProperty('--wor-safe-top', S.safeTop + 'px');
+        vpRoot.style.setProperty('--wor-safe-bottom', S.safeBottom + 'px');
+      }
     } catch (e) {
       send({ t: 'error', message: String(e && e.message || e) });
     }

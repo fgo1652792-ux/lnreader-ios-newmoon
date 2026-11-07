@@ -156,7 +156,10 @@ export default function useChapter(
   });
 
   useEffect(() => {
-    NativeVolumeButtonListener.setActive(useVolumeButtons);
+    // Strict boolean: a settings object hydrated from a partial MMKV blob can
+    // carry `useVolumeButtons: undefined` — passing that into the native
+    // Bool parameter throws FunctionCallException on the JS→native conversion.
+    NativeVolumeButtonListener.setActive(useVolumeButtons === true);
     return () => NativeVolumeButtonListener.setActive(false);
   }, [useVolumeButtons]);
 

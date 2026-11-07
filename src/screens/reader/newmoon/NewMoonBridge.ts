@@ -47,6 +47,24 @@ export const parseShellEvent = (raw: unknown): ShellEvent | null => {
 };
 
 /**
+ * True when the 'ready' handler must (re-)send the chapter: the CURRENT
+ * document epoch has not received a 'chapter' message yet.
+ *
+ * `chapterSentEpoch` is the doc epoch that last got a chapter (0 = never);
+ * `docEpoch` is the live document epoch (bumped on every onLoadStart and
+ * every primary chapter load). After a real WebView reload the two diverge —
+ * a plain boolean flag (chapterSentRef) stayed `true` from the dead document
+ * and suppressed the resend, which is exactly the stale-state black-screen
+ * bug reported on devices. The epoch comparison self-heals every reload
+ * while a normal boot (chapter queued pre-ready in the same epoch) never
+ * double-sends.
+ */
+export const shouldResendChapterOnReady = (
+  chapterSentEpoch: number,
+  docEpoch: number,
+): boolean => chapterSentEpoch !== docEpoch;
+
+/**
  * react-native-webview's default generic (P = undefined) collapses
  * `WebViewProps & P` to never, which poisons JSX overload resolution for
  * anyone holding that ref. Every ref in this feature is typed with the

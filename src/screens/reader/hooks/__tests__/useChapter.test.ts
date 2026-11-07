@@ -478,6 +478,51 @@ describe('useChapter', () => {
     );
   });
 
+  it('sends STRICT booleans to NativeVolumeButtonListener.setActive (regression: undefined crashed the native Bool conversion)', async () => {
+    const store = createStore();
+    mockUseNovelActions.mockReturnValue(store.state);
+    // A settings object hydrated from a partial MMKV blob: `useVolumeButtons`
+    // is missing entirely (the shape the pre-merge settings writer produced).
+    mockUseChapterGeneralSettings.mockReturnValue({
+      autoScroll: false,
+      autoScrollInterval: 1,
+      autoScrollOffset: 100,
+      volumeButtonsOffset: 100,
+      pageReader: false,
+      pageReaderInvertVolumeButtons: false,
+      pageReaderDisableAnimation: false,
+    });
+
+    const { result, rerender, unmount } = renderHook((_props?: boolean) =>
+      useFlatChapter(initialChapter),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const setActive = NativeVolumeButtonListener.setActive as jest.Mock;
+    // `undefined === true` → false. toHaveBeenCalledWith(false) FAILS if the
+    // implementation ever passes `undefined` (undefined !== false in Jest's
+    // equality), which is exactly the native conversion that crashed.
+    expect(setActive).toHaveBeenLastCalledWith(false);
+
+    // Toggling the setting must forward the real boolean.
+    mockUseChapterGeneralSettings.mockReturnValue({
+      autoScroll: false,
+      autoScrollInterval: 1,
+      autoScrollOffset: 100,
+      useVolumeButtons: true,
+      volumeButtonsOffset: 100,
+      pageReader: false,
+      pageReaderInvertVolumeButtons: false,
+      pageReaderDisableAnimation: false,
+    });
+    rerender(true);
+    await waitFor(() => expect(setActive).toHaveBeenLastCalledWith(true));
+
+    unmount();
+    // Cleanup always deactivates with a strict `false`.
+    expect(setActive).toHaveBeenLastCalledWith(false);
+  });
+
   it('inverts volume button directions in paged mode when pageReaderInvertVolumeButtons is enabled', async () => {
     const store = createStore();
     mockUseNovelActions.mockReturnValue(store.state);

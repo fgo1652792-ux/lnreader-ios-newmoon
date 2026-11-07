@@ -1,62 +1,106 @@
-import React from 'react';
-import { View, StyleSheet } from 'react-native';
+// lnreader-ios/src/screens/settings/SettingsReaderScreen/tabs/ThemeTab.tsx
+//
+// Theme settings for the New Moon (WOR) engine. Presets are the engine's own
+// THEME_CYCLE (sections.ts); picking a preset also clears customColors, while
+// picking a manual color sets customColors=true — the exact semantics the
+// shell's dock uses.
+
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
-import { useTheme, useChapterReaderSettings } from '@hooks/persisted';
-import { getString } from '@i18n/translations';
-import { List, ColorPreferenceItem, Button } from '@components/index';
-import { useBoolean } from '@hooks';
 import { Portal } from 'react-native-paper';
+
+import { ColorPreferenceItem, List } from '@components/index';
+import { useTheme } from '@hooks/persisted';
+import { getString } from '@i18n/translations';
 import ReaderColorPickerModal from '@components/ColorPickerModal/ReaderColorPickerModal';
-import { initialChapterReaderSettings } from '@hooks/persisted/useSettings';
-import ReaderThemeSelector from '@screens/reader/components/ReaderBottomSheet/ReaderThemeSelector';
-import { presetReaderThemes } from '@utils/constants/readerConstants';
+import type { ThemeColors } from '@theme/types';
+
+import { type WorSettingsTabProps } from '../useWorSettings';
+import { THEME_CYCLE } from '../../../../reader/newmoon/sections';
+
+/** THEME_CYCLE bgPreset → translation key (labels are engine preset names). */
+const PRESET_LABEL_KEYS = {
+  black: 'newMoon.settingsThemeBlack',
+  __light__: 'newMoon.settingsThemeLight',
+  soft: 'newMoon.settingsThemeSoft',
+  charcoal: 'newMoon.settingsThemeCharcoal',
+} as const;
 
 /** Comfortable single-color presets for each channel. */
 const BACKGROUND_PRESETS = [
+  '#000000',
+  '#0b0b0b',
+  '#16181d',
+  '#232323',
+  '#2e2e2e',
+  '#f3efe7',
   '#FFFFFF',
-  '#F5F5FA',
   '#F7DFC6',
   '#DCE5E2',
-  '#E8E6E3',
   '#CCE8CF',
-  '#292832',
-  '#1C1C1E',
-  '#161B22',
-  '#000000',
 ];
 
 const TEXT_PRESETS = [
+  '#ffffff',
+  '#eef1f6',
+  '#f3f3f3',
+  '#1c1c1c',
   '#111111',
-  '#2C2C2C',
   '#4A3B2A',
-  '#37474F',
-  '#593100',
   '#8D6E63',
   '#CCCCCC',
-  '#B0BEC5',
   '#9E9E9E',
-  '#FFFFFF',
+  '#4ade80',
 ];
 
-const ThemeTab: React.FC = () => {
+/** Round swatch for a THEME_CYCLE preset. */
+const PresetSwatch: React.FC<{
+  color: string;
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  theme: ThemeColors;
+}> = ({ color, label, active, onPress, theme }) => (
+  <Pressable
+    style={styles.swatch}
+    android_ripple={{ color: theme.rippleColor }}
+    onPress={onPress}
+  >
+    <View
+      style={[
+        styles.swatchPreview,
+        {
+          backgroundColor: color,
+          borderColor: active ? theme.primary : theme.outline,
+        },
+      ]}
+    />
+    <Text
+      numberOfLines={1}
+      style={[
+        styles.swatchLabel,
+        { color: active ? theme.primary : theme.onSurface },
+      ]}
+    >
+      {label}
+    </Text>
+  </Pressable>
+);
+
+const ThemeTab: React.FC<WorSettingsTabProps> = ({ settings, patch }) => {
   const theme = useTheme();
-  const readerSettings = useChapterReaderSettings();
-  const readerBackgroundModal = useBoolean();
-  const readerTextColorModal = useBoolean();
+  const [backgroundModal, setBackgroundModal] = useState(false);
+  const [textModal, setTextModal] = useState(false);
+  const [accentModal, setAccentModal] = useState(false);
 
-  const labelStyle = [styles.label, { color: theme.onSurface }];
-
-  const isCurrentThemeCustom = readerSettings.customThemes.some(
-    item =>
-      item.backgroundColor === readerSettings.theme &&
-      item.textColor === readerSettings.textColor,
-  );
-
-  const isCurrentThemePreset = presetReaderThemes.some(
-    item =>
-      item.backgroundColor === readerSettings.theme &&
-      item.textColor === readerSettings.textColor,
-  );
+  const selectPreset = (preset: (typeof THEME_CYCLE)[number]) =>
+    patch({
+      bgPreset: preset.bgPreset,
+      bgColor: preset.bgColor,
+      textColor: preset.textColor,
+      customColors: false,
+    });
 
   return (
     <>
@@ -67,106 +111,117 @@ const ThemeTab: React.FC = () => {
       >
         <View style={styles.section}>
           <List.SubHeader theme={theme}>
-            {getString('readerSettings.preset')}
+            {getString('newMoon.settingsThemePreset')}
           </List.SubHeader>
-          <ReaderThemeSelector
-            label={getString('readerSettings.preset')}
-            labelStyle={labelStyle}
-          />
+          <View style={styles.presetRow}>
+            {THEME_CYCLE.map(preset => {
+              const active = settings.bgPreset === preset.bgPreset && !settings.customColors;
+              const labelKey =
+                PRESET_LABEL_KEYS[preset.bgPreset as keyof typeof PRESET_LABEL_KEYS];
+              return (
+                <PresetSwatch
+                  key={preset.bgPreset}
+                  color={preset.bgColor}
+                  label={
+                    labelKey
+                      ? getString(labelKey)
+                      : preset.bgPreset
+                  }
+                  active={active}
+                  onPress={() => selectPreset(preset)}
+                  theme={theme}
+                />
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.section}>
           <List.SubHeader theme={theme}>
-            {getString('readerSettings.customColors')}
+            {getString('newMoon.settingsCustomColorsTitle')}
           </List.SubHeader>
           <ColorPreferenceItem
-            label={getString('readerSettings.backgroundColor')}
-            description={readerSettings.theme}
-            onPress={readerBackgroundModal.setTrue}
+            label={getString('newMoon.settingsBgColor')}
+            description={settings.bgColor}
+            onPress={() => setBackgroundModal(true)}
             theme={theme}
           />
           <ColorPreferenceItem
-            label={getString('readerSettings.textColor')}
-            description={readerSettings.textColor}
-            onPress={readerTextColorModal.setTrue}
+            label={getString('newMoon.settingsTextColor')}
+            description={settings.textColor}
+            onPress={() => setTextModal(true)}
+            theme={theme}
+          />
+          <ColorPreferenceItem
+            label={getString('newMoon.settingsAccent')}
+            description={settings.accent}
+            onPress={() => setAccentModal(true)}
             theme={theme}
           />
         </View>
-
-        {isCurrentThemeCustom ? (
-          <View style={styles.buttonContainer}>
-            <Button
-              style={styles.button}
-              title={getString('readerSettings.deleteCustomTheme')}
-              onPress={() =>
-                readerSettings.deleteCustomReaderTheme({
-                  backgroundColor: readerSettings.theme,
-                  textColor: readerSettings.textColor,
-                })
-              }
-            />
-          </View>
-        ) : !isCurrentThemePreset ? (
-          <View style={styles.buttonContainer}>
-            <Button
-              style={styles.button}
-              title={getString('readerSettings.saveCustomTheme')}
-              onPress={() =>
-                readerSettings.saveCustomReaderTheme({
-                  backgroundColor: readerSettings.theme,
-                  textColor: readerSettings.textColor,
-                })
-              }
-            />
-          </View>
-        ) : null}
 
         <View style={styles.bottomSpacing} />
       </BottomSheetScrollView>
 
       <Portal>
         <ReaderColorPickerModal
-          title={getString('readerSettings.backgroundColor')}
-          visible={readerBackgroundModal.value}
-          color={readerSettings.theme}
-          otherColor={readerSettings.textColor}
+          title={getString('newMoon.settingsBgColor')}
+          visible={backgroundModal}
+          color={settings.bgColor}
+          otherColor={settings.textColor}
           editedChannel="background"
           presets={BACKGROUND_PRESETS}
           theme={theme}
-          onConfirm={hex =>
-            readerSettings.setChapterReaderSettings({ theme: hex })
-          }
+          onConfirm={hex => patch({ bgColor: hex, customColors: true })}
           onReset={() =>
-            readerSettings.setChapterReaderSettings({
-              theme: initialChapterReaderSettings.theme,
+            patch({
+              bgPreset: THEME_CYCLE[0].bgPreset,
+              bgColor: THEME_CYCLE[0].bgColor,
+              textColor: THEME_CYCLE[0].textColor,
+              customColors: false,
             })
           }
-          onDismiss={readerBackgroundModal.setFalse}
+          onDismiss={() => setBackgroundModal(false)}
         />
         <ReaderColorPickerModal
-          title={getString('readerSettings.textColor')}
-          visible={readerTextColorModal.value}
-          color={readerSettings.textColor}
-          otherColor={readerSettings.theme}
+          title={getString('newMoon.settingsTextColor')}
+          visible={textModal}
+          color={settings.textColor}
+          otherColor={settings.bgColor}
           editedChannel="text"
           presets={TEXT_PRESETS}
           theme={theme}
-          onConfirm={hex =>
-            readerSettings.setChapterReaderSettings({ textColor: hex })
-          }
+          onConfirm={hex => patch({ textColor: hex, customColors: true })}
           onReset={() =>
-            readerSettings.setChapterReaderSettings({
-              textColor: initialChapterReaderSettings.textColor,
+            patch({
+              textColor: THEME_CYCLE[0].textColor,
+              customColors: false,
             })
           }
-          onDismiss={readerTextColorModal.setFalse}
+          onDismiss={() => setTextModal(false)}
+        />
+        <ReaderColorPickerModal
+          title={getString('newMoon.settingsAccent')}
+          visible={accentModal}
+          color={settings.accent}
+          otherColor={settings.bgColor}
+          editedChannel="text"
+          presets={TEXT_PRESETS}
+          theme={theme}
+          onConfirm={hex => patch({ accent: hex, customColors: true })}
+          onReset={() =>
+            patch({
+              accent: '#808080',
+              bgColor: settings.bgColor,
+              textColor: settings.textColor,
+            })
+          }
+          onDismiss={() => setAccentModal(false)}
         />
       </Portal>
     </>
   );
 };
-
-export default ThemeTab;
 
 const styles = StyleSheet.create({
   container: {
@@ -178,17 +233,30 @@ const styles = StyleSheet.create({
   section: {
     marginVertical: 8,
   },
-  label: {
-    fontSize: 16,
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
   },
-  buttonContainer: {
-    marginVertical: 8,
-    marginHorizontal: 16,
+  swatch: {
+    alignItems: 'center',
+    borderRadius: 12,
+    padding: 10,
+    minWidth: 76,
   },
-  button: {
-    marginVertical: 8,
+  swatchPreview: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+  },
+  swatchLabel: {
+    fontSize: 12,
+    marginTop: 6,
   },
   bottomSpacing: {
     height: 24,
   },
 });
+
+export default ThemeTab;

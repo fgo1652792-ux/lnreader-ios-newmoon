@@ -20,8 +20,13 @@ public class NativeVolumeButtonListenerModule: Module {
 
     Events("VolumeUp", "VolumeDown")
 
-    Function("setActive") { (active: Bool) in
-      if active {
+    // [4-b] Optional parameter: Expo Modules Core converts JS `undefined` to
+    // nil for optional params instead of throwing
+    // FunctionCallException("The 1st argument cannot be cast to type Bool").
+    // A missing value is treated as `false` (listener off).
+    Function("setActive") { (active: Bool?) in
+      let isActive = active == true
+      if isActive {
         try? AVAudioSession.sharedInstance().setCategory(.ambient)
         try? AVAudioSession.sharedInstance().setActive(true)
         self.lastVolume = AVAudioSession.sharedInstance().outputVolume

@@ -361,21 +361,37 @@ export const initialChapterReaderSettings: ChapterReaderSettings = {
  * of the render-time snapshot. The snapshot-based version lost updates when
  * two writes happened in the same tick (e.g. a reset button writing two
  * fields, or different components writing the same domain simultaneously).
+ *
+ * `defaults` (the hook's initial settings object) is folded into every write:
+ * the FIRST write on a missing OR partial stored value persists a COMPLETE
+ * object. Without it, a partial blob (e.g. `{ autoScroll: true }` alone) was
+ * written to MMKV and read back with `undefined` booleans — the root cause of
+ * the v2.1.4 `setActive` native crash (`useVolumeButtons: undefined` failed
+ * the JS→native Bool conversion).
  */
-const createSettingsWriter = <T extends object>(key: string) => {
+const createSettingsWriter = <T extends object>(key: string, defaults: T) => {
   type Setter = Dispatch<SetStateAction<T | undefined>>;
   return (setSettings: Setter, values: Partial<T>) => {
     const latest = getMMKVObject<T>(key);
-    const base = latest ?? ({} as T);
+    const base = { ...defaults, ...latest };
     setSettings({ ...base, ...values });
   };
 };
 
 export const useAppSettings = () => {
-  const [appSettings = initialAppSettings, setSettings] =
+  const [storedAppSettings, setSettings] =
     useMMKVObject<AppSettings>(APP_SETTINGS);
 
-  const writeAppSettings = createSettingsWriter<AppSettings>(APP_SETTINGS);
+  // A stored PARTIAL object (written by older builds) must never surface
+  // `undefined` fields. Memoized for referential stability — consumers derive
+  // effects/callbacks from these settings (same pattern as
+  // useChapterReaderSettings below).
+  const appSettings = useMemo(
+    () => ({ ...initialAppSettings, ...storedAppSettings }),
+    [storedAppSettings],
+  );
+
+  const writeAppSettings = createSettingsWriter(APP_SETTINGS, initialAppSettings);
   const setAppSettings = (values: Partial<AppSettings>) =>
     writeAppSettings(setSettings, values);
 
@@ -386,11 +402,18 @@ export const useAppSettings = () => {
 };
 
 export const useBrowseSettings = () => {
-  const [browseSettings = initialBrowseSettings, setSettings] =
+  const [storedBrowseSettings, setSettings] =
     useMMKVObject<BrowseSettings>(BROWSE_SETTINGS);
 
-  const writeBrowseSettings = createSettingsWriter<BrowseSettings>(
+  // Defaults merge — see useAppSettings. Memoized.
+  const browseSettings = useMemo(
+    () => ({ ...initialBrowseSettings, ...storedBrowseSettings }),
+    [storedBrowseSettings],
+  );
+
+  const writeBrowseSettings = createSettingsWriter(
     BROWSE_SETTINGS,
+    initialBrowseSettings,
   );
   const setBrowseSettings = (values: Partial<BrowseSettings>) =>
     writeBrowseSettings(setSettings, values);
@@ -415,27 +438,44 @@ const defaultLibrarySettings: LibrarySettings = {
 };
 
 export const useLibrarySettings = () => {
-  const [librarySettings, setSettings] =
+  const [storedLibrarySettings, setSettings] =
     useMMKVObject<LibrarySettings>(LIBRARY_SETTINGS);
 
-  const writeLibrarySettings = createSettingsWriter<LibrarySettings>(
+  // Defaults merge, memoized (the library list derives memoized data from
+  // these settings on every render).
+  const librarySettings = useMemo(
+    () => ({ ...defaultLibrarySettings, ...storedLibrarySettings }),
+    [storedLibrarySettings],
+  );
+
+  const writeLibrarySettings = createSettingsWriter(
     LIBRARY_SETTINGS,
+    defaultLibrarySettings,
   );
   const setLibrarySettings = (value: Partial<LibrarySettings>) =>
     writeLibrarySettings(setSettings, value);
 
   return {
-    ...{ ...defaultLibrarySettings, ...librarySettings },
+    ...librarySettings,
     setLibrarySettings,
   };
 };
 
 export const useChapterGeneralSettings = () => {
-  const [chapterGeneralSettings = initialChapterGeneralSettings, setSettings] =
+  const [storedGeneralSettings, setSettings] =
     useMMKVObject<ChapterGeneralSettings>(CHAPTER_GENERAL_SETTINGS);
 
-  const writeGeneralSettings = createSettingsWriter<ChapterGeneralSettings>(
+  // Defaults merge — a stored partial object used to read back
+  // `useVolumeButtons: undefined`, which crashed the native volume-button
+  // module on reader open. Memoized.
+  const chapterGeneralSettings = useMemo(
+    () => ({ ...initialChapterGeneralSettings, ...storedGeneralSettings }),
+    [storedGeneralSettings],
+  );
+
+  const writeGeneralSettings = createSettingsWriter(
     CHAPTER_GENERAL_SETTINGS,
+    initialChapterGeneralSettings,
   );
   const setChapterGeneralSettings = (values: Partial<ChapterGeneralSettings>) =>
     writeGeneralSettings(setSettings, values);
@@ -470,8 +510,9 @@ export const useChapterReaderSettings = () => {
     [storedSettings],
   );
 
-  const writeReaderSettings = createSettingsWriter<ChapterReaderSettings>(
+  const writeReaderSettings = createSettingsWriter(
     CHAPTER_READER_SETTINGS,
+    initialChapterReaderSettings,
   );
   const setChapterReaderSettings = (values: Partial<ChapterReaderSettings>) =>
     writeReaderSettings(setSettings, values);

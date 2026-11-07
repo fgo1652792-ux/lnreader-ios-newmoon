@@ -32,6 +32,7 @@ import {
   SETTINGS_KEYS,
   STRUCTURAL_KEYS,
 } from '../../../reader/newmoon/sections';
+import { ensureClassicMigration } from '../../../services/reader/migrateClassicReaderSettings';
 
 export type WorReaderSettings = typeof DEFAULT_SETTINGS;
 
@@ -189,6 +190,9 @@ export const lastPosKeyFor = (novelId: number): string =>
  * SETTINGS_KEYS) — mirrors the engine's loadSettings().
  */
 export const loadWorSettings = (): WorReaderSettings => {
+  // [4-b] one-time classic→wor migration (guarded, best-effort; must run
+  // before the read below so migrated values land in this load).
+  ensureClassicMigration();
   const settings: WorReaderSettings = { ...DEFAULT_SETTINGS };
   try {
     const raw = MMKVStorage.getString(WOR_SETTINGS_KEY);

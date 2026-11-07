@@ -13,8 +13,11 @@
 //   • Chapter identity is positional (NewMoonAdapter) — no sequential-number
 //     assumptions anywhere.
 //
-// Performance rules honored: shellHtml is built ONCE per mount (useMemo with
-// empty deps), chapter HTML is pushed straight through injectJavaScript
+// Performance rules honored: shellHtml is built ONCE per mount from a
+// MOUNT-TIME safe-area snapshot (live safe-area updates travel through the
+// bridge 'viewport' message → CSS custom properties — rebuilding this string
+// would reload the WKWebView document, re-fetch the chapter and destroy all
+// reading state), chapter HTML is pushed straight through injectJavaScript
 // (never round-tripped through state) and the WebView source never changes
 // after mount.
 
@@ -73,6 +76,7 @@ import { htmlToWorText } from '../../../reader/newmoon/htmlToWorText';
 import {
   NewMoonBridge,
   parseShellEvent,
+  shouldResendChapterOnReady,
   type WebViewHandle,
 } from './NewMoonBridge';
 import {
@@ -94,6 +98,9 @@ import {
 } from './NewMoonAdapter';
 
 const TTS_CHUNK_CHARS = 3000;
+/** Boot failsafe: if the shell never fires 'ready' after onLoadStart, surface
+ *  a retry button instead of a permanent black/loading screen. */
+const BOOT_FAILSAFE_MS = 10_000;
 
 type TranslationKey = keyof StringMap;
 
@@ -169,15 +176,25 @@ const NewMoonReaderScreen = ({
   const appendedRef = useRef<number[]>([]);
   const endReachedRef = useRef(false);
   const loadingNextRef = useRef(false);
-  /** Set once a `chapter` message has been handed to the bridge. */
-  const chapterSentRef = useRef(false);
+  /** Doc epoch that last received a `chapter` message (0 = none yet). The
+   *  'ready' handler compares it against docEpochRef: a real reload leaves
+   *  the sent epoch behind → the chapter is re-sent into the fresh document
+   *  (self-heal). A plain boolean flag here stayed `true` from the dead
+   *  document and suppressed the resend — the reported stale-state bug. */
+  const chapterSentEpochRef = useRef(0);
   /** True while a primary chapter load is in flight. */
   const loadingChapterRef = useRef(false);
   /** Dock-next in continuous mode → scroll to the freshly appended section. */
   const autoScrollNextRef = useRef(false);
-  /** Epoch guard: drops stale needNext fetches after a doc swap. */
+  /** Epoch guard: drops stale needNext fetches after a doc swap. Bumped on
+   *  every onLoadStart (real document load/reload) and every primary load. */
   const docEpochRef = useRef(0);
   const chapterReqRef = useRef(0);
+  /** Doc epoch the in-flight primary load belongs to — only meaningful while
+   *  loadingChapterRef is true; a reload orphans the load (epoch mismatch). */
+  const loadingChapterEpochRef = useRef(0);
+  /** Boot failsafe timer, armed on every onLoadStart, cancelled on 'ready'. */
+  const bootFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markedReadRef = useRef<number | undefined>(undefined);
   const lastScrollRef = useRef<{
     wNum: number;
@@ -199,6 +216,12 @@ const NewMoonReaderScreen = ({
   // --------------------------------------------------------------- state ---
   const [loading, setLoading] = useState(true);
   const [loadingNext, setLoadingNext] = useState(false);
+  /** Boot failsafe tripped (no shell 'ready' within BOOT_FAILSAFE_MS after
+   *  onLoadStart) → the retry overlay replaces the loading spinner. */
+  const [bootStalled, setBootStalled] = useState(false);
+  /** Bumped on render-process death / retry → clean WebView remount (the
+   *  normal boot flow then restores settings + chapters + chapter). */
+  const [webViewReloadKey, setWebViewReloadKey] = useState(0);
   const [dockOpen, setDockOpen] = useState(initialSettings.dockOpen !== false);
   const [, setIsFavorite] = useState(!!novel.inLibrary);
   const [chapterTitle, setChapterTitle] = useState(initialChapter.name);
@@ -216,14 +239,35 @@ const NewMoonReaderScreen = ({
     };
   }, [initialSettings]);
 
+  /** MOUNT-TIME safe-area snapshot (lazy initial state — evaluated exactly
+   *  once, stable identity for the screen's lifetime). Status-bar show/hide
+   *  (dock toggling) and rotation mutate the LIVE insets; those travel to the
+   *  shell through the bridge 'viewport' message. shellHtml must never see
+   *  live insets: a changed `source` prop reloads the WKWebView document,
+   *  re-fetches the chapter and destroys all reading state. */
+  const [mountInsets] = useState(() => ({
+    top: insets.top,
+    bottom: insets.bottom,
+  }));
+
   // ---------------------------------------------------------- shell html ---
   // Built ONCE per mount. Settings changes NEVER rebuild it (the shell applies
   // settings via the bridge); safe areas and the asset prefix are static.
+  //
+  // MOUNT-TIME SNAPSHOT deps (see mountInsets above): mountInsets /
+  // initialSettings are lazy one-time state and novel identity comes from
+  // route params — nothing here can change while the screen is alive, so the
+  // memo evaluates exactly once. The exhaustive-deps suppression is
+  // deliberate: it freezes this memo against future edits that would smuggle
+  // LIVE values (insets.top/bottom) into the dependency list — rebuilding
+  // this string would reload the WKWebView document and destroy reading
+  // state. Live safe-area updates go through the bridge 'viewport' message
+  // (CSS vars) instead, never through this string.
   const shellHtml = useMemo(
     () =>
       buildWorShell({
-        safeTop: insets.top,
-        safeBottom: insets.bottom,
+        safeTop: mountInsets.top,
+        safeBottom: mountInsets.bottom,
         novelTitle: novel.name,
         novelCover: novel.cover ?? '',
         userName: '',
@@ -231,7 +275,8 @@ const NewMoonReaderScreen = ({
         initialSettings: { ...initialSettings },
         fontsBase: getReaderAssetsPrefix(),
       }),
-    [initialSettings, insets.top, insets.bottom, novel.name, novel.cover],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [initialSettings, novel.name, novel.cover],
   );
   const assetsUriPrefix = useMemo(() => getReaderAssetsPrefix(), []);
 
@@ -318,7 +363,13 @@ const NewMoonReaderScreen = ({
       const hasPrev = wNum > 1;
       const hasNext = neighborWNum(wNum, 1, total) !== null;
       const percent = computePercent(wNum, total);
-      chapterSentRef.current = true;
+      // Latch the doc epoch this chapter belongs to (see chapterSentEpochRef):
+      // the 'ready' handler uses it to detect documents that never got one.
+      chapterSentEpochRef.current = docEpochRef.current;
+      // A chapter message in the shell means content is up — resolve the
+      // loading overlay here too (self-heal resends after a reload don't go
+      // through loadChapter).
+      setLoading(false);
       bridgeRef.current.post({
         kind: 'chapter',
         number: wNum,
@@ -349,6 +400,7 @@ const NewMoonReaderScreen = ({
       appendedRef.current = [];
       endReachedRef.current = false;
       loadingChapterRef.current = true;
+      loadingChapterEpochRef.current = epoch;
       setLoading(true);
       setChapterTitle(chap.name);
       ttsChunksRef.current = [];
@@ -398,6 +450,7 @@ const NewMoonReaderScreen = ({
       } finally {
         if (reqId === chapterReqRef.current) {
           loadingChapterRef.current = false;
+          loadingChapterEpochRef.current = 0;
         }
       }
     },
@@ -741,9 +794,27 @@ const NewMoonReaderScreen = ({
             keepScroll: true,
           });
         } catch {
-          // keep the currently rendered chapter on rebuild failure
+          // keep the currently rendered chapter on rebuild failure; after a
+          // doc reload there is nothing rendered — drop the overlay so the
+          // (navigable) shell is reachable instead of an eternal spinner
+          setLoading(false);
         }
       })();
+    };
+  });
+
+  /** (Re)starts the initial chapter load — used by the boot pipeline below
+   *  AND by the 'ready' self-heal when a reload killed the very first load
+   *  (nothing was ever rendered, so there is no current chapter to rebuild).
+   *  Latest-closure assignment happens in an effect (never during render). */
+  const startInitialChapterRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    startInitialChapterRef.current = () => {
+      const wNum =
+        [...wNumMapRef.current.entries()].find(
+          ([, c]) => c.id === initialChapter.id,
+        )?.[0] ?? 1;
+      void loadChapter(initialChapter, wNum);
     };
   });
 
@@ -918,17 +989,57 @@ const NewMoonReaderScreen = ({
     handleShellEventRef.current = event => {
       switch (event.t) {
         case 'ready': {
+          // Document booted — cancel the boot failsafe (retry UI).
+          if (bootFailsafeRef.current) {
+            clearTimeout(bootFailsafeRef.current);
+            bootFailsafeRef.current = null;
+          }
+          setBootStalled(false);
           bridgeRef.current.markReady();
           sendSettings(settingsRef.current);
           sendChapters();
           sendWords();
           sendFav(isFavoriteRef.current);
-          // Engine parity: after flushing the queue, re-send the chapter ONLY
-          // if none reached the bridge yet (slow boot ordering); a chapter
-          // queued pre-ready is flushed above, and a fresh load in flight will
-          // post its own — never duplicate the fetch.
-          if (!chapterSentRef.current && !loadingChapterRef.current) {
-            rebuildCurrentRef.current();
+          // A document that never received a chapter (real reload — the sent
+          // epoch lags docEpoch after every onLoadStart) gets one re-sent:
+          // this is the self-heal that turns any WebView reload into a clean
+          // restore. Normal boots skip it (chapter queued pre-ready flushed
+          // above, epoch already satisfied — never a duplicate fetch):
+          if (
+            shouldResendChapterOnReady(
+              chapterSentEpochRef.current,
+              docEpochRef.current,
+            ) &&
+            !(
+              loadingChapterRef.current &&
+              loadingChapterEpochRef.current === docEpochRef.current
+            )
+          ) {
+            // (a primary load for THIS document suppresses the resend — it
+            // delivers on its own)
+            if (currentWNumRef.current > 0) {
+              // the previous document owned a chapter → re-render it in place
+              rebuildCurrentRef.current();
+            } else if (wNumMapRef.current.size > 0) {
+              // nothing was ever rendered (reload killed the first load) —
+              // restart the initial chapter; the words store may still be
+              // loading, so wait for the boot pipeline in that case.
+              startInitialChapterRef.current();
+            }
+          }
+          // Re-apply live safe-area deltas to the fresh document: it booted
+          // with the mount-time snapshot baked in, which is stale after
+          // rotation / status-bar toggles. (The handler closure always sees
+          // the latest insets — this effect re-runs every render.)
+          if (
+            insets.top !== mountInsets.top ||
+            insets.bottom !== mountInsets.bottom
+          ) {
+            bridgeRef.current.post({
+              kind: 'viewport',
+              safeTop: insets.top,
+              safeBottom: insets.bottom,
+            });
           }
           break;
         }
@@ -1080,6 +1191,64 @@ const NewMoonReaderScreen = ({
     [],
   );
 
+  // ------------------------------------------- WebView lifecycle protocol ---
+  // Every real document load goes through handleLoadStart. Anything the
+  // previous document owned is dead at that instant: queued bridge messages
+  // (they would be injected into a shell that no longer exists), the chapter
+  // the doc had received (chapterSentEpochRef now lags docEpochRef → the
+  // next 'ready' self-heals) and in-flight work (epoch guards drop it).
+  const handleLoadStart = useCallback(() => {
+    docEpochRef.current += 1;
+    bridgeRef.current.reset();
+    setLoading(true);
+    setBootStalled(false);
+    if (bootFailsafeRef.current) {
+      clearTimeout(bootFailsafeRef.current);
+    }
+    bootFailsafeRef.current = setTimeout(() => {
+      bootFailsafeRef.current = null;
+      // No shell 'ready' within the window — never a permanent black screen:
+      // swap the loading overlay for a retry button.
+      setBootStalled(true);
+      setLoading(false);
+    }, BOOT_FAILSAFE_MS);
+  }, []);
+
+  /** iOS content-process kill (low-memory devices, e.g. the 3GB iPad 7) and
+   *  Android render-process gone. The JS context is gone — injectJavaScript
+   *  is a no-op from here on. A key bump forces a clean WebView remount; the
+   *  normal boot flow (onLoadStart → ready → settings → chapters → chapter)
+   *  then restores everything. */
+  const handleRenderProcessDeath = useCallback(() => {
+    docEpochRef.current += 1; // orphan anything in flight for the dead doc
+    bridgeRef.current.reset();
+    if (bootFailsafeRef.current) {
+      clearTimeout(bootFailsafeRef.current);
+      bootFailsafeRef.current = null;
+    }
+    setBootStalled(false);
+    setLoading(true);
+    setWebViewReloadKey(key => key + 1);
+  }, []);
+
+  /** Boot-failsafe retry: remount the WebView (fresh document). The boot
+   *  chapter load is re-dispatched from the 'ready' self-heal, so no stale
+   *  queue survives into the new document. */
+  const retryBoot = useCallback(() => {
+    setBootStalled(false);
+    setLoading(true);
+    setWebViewReloadKey(key => key + 1);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (bootFailsafeRef.current) {
+        clearTimeout(bootFailsafeRef.current);
+      }
+    },
+    [],
+  );
+
   // ------------------------------------------------------------- effects ---
   // Boot: chapters + words + the initial chapter.
   const bootRef = useRef(false);
@@ -1094,11 +1263,21 @@ const NewMoonReaderScreen = ({
       wordsStoreRef.current = store;
       coloredTermsFor();
       sendWords();
-      const wNum =
-        [...wNumMapRef.current.entries()].find(
-          ([, c]) => c.id === initialChapter.id,
-        )?.[0] ?? 1;
-      await loadChapter(initialChapter, wNum);
+      // Boot pipeline done. If a self-healed document already delivered the
+      // chapter while the words store was still loading, re-render it once
+      // now that word replacements are available; if a primary load for this
+      // doc is in flight it will deliver on its own; otherwise start the
+      // initial chapter (normal cold boot).
+      if (chapterSentEpochRef.current === docEpochRef.current) {
+        rebuildCurrentRef.current();
+      } else if (
+        !(
+          loadingChapterRef.current &&
+          loadingChapterEpochRef.current === docEpochRef.current
+        )
+      ) {
+        startInitialChapterRef.current();
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1112,6 +1291,27 @@ const NewMoonReaderScreen = ({
       SystemBars.setHidden(false);
     };
   }, [dockOpen]);
+
+  // Live safe-area updates WITHOUT reloading the document: hiding/showing the
+  // status bar (dock toggle) and rotation change the insets, but the WebView
+  // source is frozen at the mount-time snapshot (see mountInsets/shellHtml).
+  // The delta goes to the shell as a 'viewport' command → :root CSS custom
+  // properties. Skipped while the live insets still equal the mount snapshot
+  // (no redundant message at boot; the fresh document already has those
+  // values baked in).
+  useEffect(() => {
+    if (
+      insets.top === mountInsets.top &&
+      insets.bottom === mountInsets.bottom
+    ) {
+      return;
+    }
+    bridgeRef.current.post({
+      kind: 'viewport',
+      safeTop: insets.top,
+      safeBottom: insets.bottom,
+    });
+  }, [insets.top, insets.bottom, mountInsets]);
 
   // Android hardware back + iOS edge swipe both route through the shell so an
   // open overlay (chapters sheet / words sheet / search / drawer) closes
@@ -1166,6 +1366,7 @@ const NewMoonReaderScreen = ({
       style={[styles.container, { backgroundColor: shellTheme.background }]}
     >
       <WebView
+        key={webViewReloadKey}
         ref={webViewRef}
         source={{ baseUrl: assetsUriPrefix, html: shellHtml }}
         style={{ backgroundColor: webViewBackground }}
@@ -1174,17 +1375,42 @@ const NewMoonReaderScreen = ({
         domStorageEnabled
         allowFileAccess
         onMessage={handleOnMessage}
+        onLoadStart={handleLoadStart}
+        onContentProcessDidTerminate={handleRenderProcessDeath}
+        onRenderProcessGone={handleRenderProcessDeath}
       />
 
       {/* Engine 'keepAwake' switch → native wake lock (same as classic). */}
       {keepAwake ? <KeepScreenAwake /> : null}
 
-      {loading ? (
+      {loading && !bootStalled ? (
         <View
           style={[styles.overlay, { backgroundColor: shellTheme.background }]}
           pointerEvents="auto"
         >
           <ActivityIndicator size="large" color={shellTheme.foreground} />
+        </View>
+      ) : null}
+
+      {/* Boot failsafe: the shell never announced 'ready' — offer a retry
+          instead of an eternal spinner / black screen. */}
+      {bootStalled ? (
+        <View
+          style={[styles.overlay, { backgroundColor: shellTheme.background }]}
+          pointerEvents="auto"
+        >
+          <IconButtonV2
+            name="refresh"
+            size={26}
+            color={shellTheme.foreground}
+            theme={theme}
+            padding={10}
+            onPress={retryBoot}
+            accessibilityLabel={getString('common.retry')}
+          />
+          <Text style={[styles.retryHint, { color: shellTheme.foreground }]}>
+            {getString('common.retry')}
+          </Text>
         </View>
       ) : null}
 
@@ -1263,6 +1489,11 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   loadingNextText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  retryHint: {
+    marginTop: 10,
+    fontSize: 14,
+    fontWeight: '700',
+  },
   nativeBar: {
     position: 'absolute',
     top: 0,

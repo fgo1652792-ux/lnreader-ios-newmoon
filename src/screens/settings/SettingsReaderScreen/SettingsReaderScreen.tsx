@@ -1,3 +1,15 @@
+// lnreader-ios/src/screens/settings/SettingsReaderScreen/SettingsReaderScreen.tsx
+//
+// Reader settings — New Moon is the ONLY visible reader engine, so this screen
+// is bound entirely to the engine's own settings (@wor_reader_settings_v4 via
+// useWorSettings). The old-engine surface is gone:
+//   • EngineSelector (New-moon ⟷ Classic radio) removed — engineSetting.ts
+//     stays as a code-level fallback for ReaderScreen.
+//   • SettingsReaderWebView (classic-reader preview) removed — the preview is
+//     now WorPreview, which runs the REAL New Moon shell.
+//   • The four tabs write WOR settings through the shared hook instance held
+//     here and feed the same object to the preview.
+
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useCallback, useRef, useState } from 'react';
 import { BottomSheetModalMethods } from '@gorhom/bottom-sheet/lib/typescript/types';
@@ -12,12 +24,12 @@ import {
 
 import { Appbar, SafeAreaView, TopTabBar } from '@components/index';
 import BottomSheet from '@components/BottomSheet/BottomSheet';
-import { useChapterReaderSettings, useTheme } from '@hooks/persisted';
+import { useTheme } from '@hooks/persisted';
 import { getString } from '@i18n/translations';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import SettingsReaderWebView from './components/SettingsReaderWebView';
-import EngineSelector from './components/EngineSelector';
+import { useWorSettings } from './useWorSettings';
+import WorPreview from './components/WorPreview';
 import DisplayTab from './tabs/DisplayTab';
 import ThemeTab from './tabs/ThemeTab';
 import NavigationTab from './tabs/NavigationTab';
@@ -64,14 +76,6 @@ const tabOptions: TabDescriptor<ReaderSettingsRoute> = {
   label: () => null,
 };
 
-export type TextAlignments =
-  | 'left'
-  | 'center'
-  | 'auto'
-  | 'right'
-  | 'justify'
-  | undefined;
-
 const SettingsReaderScreen = () => {
   const theme = useTheme();
   const navigation = useNavigation();
@@ -80,9 +84,10 @@ const SettingsReaderScreen = () => {
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const [tabIndex, setTabIndex] = useState(0);
 
-  const readerSettings = useChapterReaderSettings();
+  // ONE hook instance: tabs and the preview share this settings object.
+  const { settings, patch } = useWorSettings();
+
   const BOTTOM_SHEET_HEIGHT = screenHeight * 0.7;
-  const readerBackgroundColor = readerSettings.theme;
 
   const openBottomSheet = () => {
     bottomSheetRef.current?.present();
@@ -92,18 +97,18 @@ const SettingsReaderScreen = () => {
     ({ route }: { route: ReaderSettingsRoute }) => {
       switch (route.key) {
         case 'display':
-          return <DisplayTab />;
+          return <DisplayTab settings={settings} patch={patch} />;
         case 'theme':
-          return <ThemeTab />;
+          return <ThemeTab settings={settings} patch={patch} />;
         case 'navigation':
-          return <NavigationTab />;
+          return <NavigationTab settings={settings} patch={patch} />;
         case 'accessibility':
-          return <AccessibilityTab />;
+          return <AccessibilityTab settings={settings} patch={patch} />;
         default:
-          return <DisplayTab />;
+          return <DisplayTab settings={settings} patch={patch} />;
       }
     },
-    [],
+    [settings, patch],
   );
 
   const renderTabBar = useCallback(
@@ -134,10 +139,7 @@ const SettingsReaderScreen = () => {
   );
 
   return (
-    <SafeAreaView
-      excludeTop
-      style={[styles.container, { backgroundColor: readerBackgroundColor }]}
-    >
+    <SafeAreaView excludeTop style={styles.container}>
       <Appbar
         mode="small"
         title={getString('readerSettings.title')}
@@ -145,12 +147,9 @@ const SettingsReaderScreen = () => {
         theme={theme}
       />
 
-      {/* Reader-engine switch (New-moon ⟷ Classic) — applies next chapter open */}
-      <EngineSelector />
-
-      {/* Large Preview Area */}
+      {/* Live preview running the real New Moon engine shell. */}
       <View style={styles.previewContainer}>
-        <SettingsReaderWebView />
+        <WorPreview settings={settings} onShellPatch={patch} />
       </View>
 
       {/* Floating Action Button to Open Bottom Sheet */}
