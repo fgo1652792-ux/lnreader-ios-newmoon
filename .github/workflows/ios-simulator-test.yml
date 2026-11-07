@@ -231,6 +231,15 @@ jobs:
           # so the test runner starts it cleanly.
           xcrun simctl terminate "$SIM_NAME" "$BUNDLE_ID" 2>/dev/null || true
 
+          # Force-enable the accessibility subsystem inside the simulator
+          # BEFORE any launch. On macOS-26 runners the freshly-booted iPad
+          # sim repeatedly presents a fully-rendered UI (see boot-smoke.png)
+          # while the runner's AX snapshot stays empty forever — the exact
+          # "Rendered but AX-dead" signature. These two preference keys are
+          # the documented workaround.
+          xcrun simctl spawn "$SIM_NAME" defaults write com.apple.Accessibility AccessibilityEnabled -bool YES 2>/dev/null || true
+          xcrun simctl spawn "$SIM_NAME" defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool YES 2>/dev/null || true
+
           # AX warmup: a freshly booted simulator frequently times out the UI
           # test runner with "Timed out waiting for AX loaded notification".
           # Launching the app once and letting it settle initializes the
