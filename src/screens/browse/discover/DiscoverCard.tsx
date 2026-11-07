@@ -58,10 +58,11 @@ export default DiscoverCard;
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
+    // The browse list already insets rows by 16; keep this card's content
+    // aligned with the 12 padding used inside source/plugin cards.
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: 16,
-    paddingVertical: 12,
+    padding: 12,
   },
   details: {
     marginStart: 16,

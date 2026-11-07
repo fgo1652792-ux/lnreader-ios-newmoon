@@ -1,18 +1,17 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import {
-  Image,
-  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import {
   LegendList,
   LegendListRenderItemProps,
 } from '@legendapp/list/react-native';
 
-import { Button, EmptyView, IconButtonV2 } from '@components';
+import { Button, EmptyView } from '@components';
 import {
   useFilteredAvailablePlugins,
   useInstalledPlugins,
@@ -22,129 +21,26 @@ import { BrowseScreenProps } from '@navigators/types';
 import { PluginItem } from '@plugins/types';
 import { getString } from '@i18n/translations';
 import { ThemeColors } from '@theme/types';
-import { getLocaleLanguageName } from '@utils/constants/languages';
 import { showToast } from '@utils/showToast';
 import {
   buildPluginEntries,
-  PluginEntry,
-  PluginStatus,
+  buildPluginRows,
+  PluginCardEntry,
+  PluginListRow,
 } from '../utils/buildBrowseEntries';
+import {
+  CARD_ESTIMATED_HEIGHT,
+  CARD_GAP,
+  WIDE_LAYOUT_MAX_CONTENT_WIDTH,
+  getBrowseColumns,
+} from '../utils/browseLayout';
+import PluginCard from './PluginCard';
 
 interface PluginsTabProps {
   navigation: BrowseScreenProps['navigation'];
   searchText: string;
   theme: ThemeColors;
 }
-
-interface PluginRowProps {
-  disabled: boolean;
-  onInstall: (plugin: PluginItem) => void;
-  onOpenDetails: (plugin: PluginItem) => void;
-  onOpenWebsite: (plugin: PluginItem) => void;
-  onUpdate: (plugin: PluginItem) => void;
-  plugin: PluginItem;
-  status: PluginStatus;
-  theme: ThemeColors;
-}
-
-const PluginRow = memo(
-  ({
-    disabled,
-    onInstall,
-    onOpenDetails,
-    onOpenWebsite,
-    onUpdate,
-    plugin,
-    status,
-    theme,
-  }: PluginRowProps) => {
-    const isInstalled = status !== 'available';
-
-    return (
-      <View style={styles.pluginRow}>
-        <Pressable
-          accessibilityLabel={
-            isInstalled
-              ? getString('browseScreen.openPluginDetails', {
-                  name: plugin.name,
-                })
-              : undefined
-          }
-          accessibilityRole={isInstalled ? 'button' : undefined}
-          disabled={!isInstalled}
-          style={styles.pluginRowAction}
-          android_ripple={
-            isInstalled ? { color: theme.rippleColor } : undefined
-          }
-          onPress={() => onOpenDetails(plugin)}
-        />
-        <View pointerEvents="none" style={styles.pluginMainContent}>
-          <Image
-            source={{ uri: plugin.iconUrl }}
-            style={[styles.icon, { backgroundColor: theme.surfaceVariant }]}
-          />
-          <View style={styles.details}>
-            <Text
-              numberOfLines={1}
-              style={[styles.name, { color: theme.onSurface }]}
-            >
-              {plugin.name}
-            </Text>
-            <Text
-              numberOfLines={1}
-              style={[styles.description, { color: theme.onSurfaceVariant }]}
-            >
-              {`${getLocaleLanguageName(plugin.lang)} · ${plugin.version}`}
-            </Text>
-          </View>
-        </View>
-        {status === 'available' ? (
-          <IconButtonV2
-            accessibilityLabel={getString('browseScreen.openWebsite', {
-              name: plugin.name,
-            })}
-            name="earth"
-            color={theme.onSurfaceVariant}
-            onPress={() => onOpenWebsite(plugin)}
-            theme={theme}
-          />
-        ) : (
-          <IconButtonV2
-            accessibilityLabel={getString('browseScreen.openPluginSettings', {
-              name: plugin.name,
-            })}
-            name="cog-outline"
-            color={theme.onSurfaceVariant}
-            onPress={() => onOpenDetails(plugin)}
-            theme={theme}
-          />
-        )}
-        {status !== 'installed' ? (
-          <IconButtonV2
-            accessibilityLabel={
-              status === 'available'
-                ? getString('browseScreen.installPlugin', {
-                    name: plugin.name,
-                  })
-                : getString('browseScreen.updatePlugin', {
-                    name: plugin.name,
-                  })
-            }
-            name="download-outline"
-            color={theme.onSurface}
-            disabled={disabled}
-            onPress={
-              status === 'available'
-                ? () => onInstall(plugin)
-                : () => onUpdate(plugin)
-            }
-            theme={theme}
-          />
-        ) : null}
-      </View>
-    );
-  },
-);
 
 export const PluginsTab = memo(
   ({ navigation, searchText, theme }: PluginsTabProps) => {
@@ -155,6 +51,8 @@ export const PluginsTab = memo(
     const [pendingPluginIds, setPendingPluginIds] = useState<Set<string>>(
       () => new Set(),
     );
+    const { width: windowWidth } = useWindowDimensions();
+    const columns = getBrowseColumns(windowWidth);
 
     const updatePendingState = useCallback(
       (pluginId: string, pending: boolean) => {
@@ -238,6 +136,11 @@ export const PluginsTab = memo(
       [availablePlugins, installedPlugins, searchText],
     );
 
+    const rows = useMemo(
+      () => buildPluginRows(entries, columns),
+      [entries, columns],
+    );
+
     const openRepositories = useCallback(
       () =>
         navigation.navigate('MoreStack', {
@@ -252,8 +155,35 @@ export const PluginsTab = memo(
       [navigation],
     );
 
+    const renderPluginCard = useCallback(
+      (entry: PluginCardEntry, fillCard: boolean) => (
+        <PluginCard
+          key={entry.key}
+          disabled={pendingPluginIds.has(entry.plugin.id)}
+          onInstall={install}
+          onOpenDetails={openDetails}
+          onOpenWebsite={openWebsite}
+          onUpdate={update}
+          plugin={entry.plugin}
+          status={entry.status}
+          style={fillCard ? styles.cardFilled : styles.cardHalf}
+          theme={theme}
+        />
+      ),
+      [install, openDetails, openWebsite, pendingPluginIds, theme, update],
+    );
+
     const renderItem = useCallback(
-      ({ item }: LegendListRenderItemProps<PluginEntry>) => {
+      ({ item }: LegendListRenderItemProps<PluginListRow>) => {
+        if (item.type === 'card-row') {
+          const fillCard = columns === 1 || item.entries.length > 1;
+          return (
+            <View style={styles.cardRow}>
+              {item.entries.map(entry => renderPluginCard(entry, fillCard))}
+            </View>
+          );
+        }
+
         if (item.type === 'header') {
           return (
             <View
@@ -284,28 +214,9 @@ export const PluginsTab = memo(
           );
         }
 
-        return (
-          <PluginRow
-            disabled={pendingPluginIds.has(item.plugin.id)}
-            onInstall={install}
-            onOpenDetails={openDetails}
-            onOpenWebsite={openWebsite}
-            onUpdate={update}
-            plugin={item.plugin}
-            status={item.status}
-            theme={theme}
-          />
-        );
+        return renderPluginCard(item, true);
       },
-      [
-        install,
-        openDetails,
-        openWebsite,
-        pendingPluginIds,
-        theme,
-        update,
-        updateAll,
-      ],
+      [columns, renderPluginCard, theme, updateAll],
     );
 
     const refresh = useCallback(async () => {
@@ -321,8 +232,8 @@ export const PluginsTab = memo(
 
     return (
       <LegendList
-        data={entries}
-        estimatedItemSize={64}
+        data={rows}
+        estimatedItemSize={CARD_ESTIMATED_HEIGHT}
         getItemType={item => item.type}
         keyExtractor={item => item.key}
         ListEmptyComponent={
@@ -351,7 +262,11 @@ export const PluginsTab = memo(
             theme={theme}
           />
         }
-        contentContainerStyle={!entries.length ? styles.emptyList : undefined}
+        contentContainerStyle={[
+          styles.listContent,
+          columns > 1 && styles.listContentWide,
+          !rows.length && styles.emptyList,
+        ]}
         recycleItems
         refreshControl={
           <RefreshControl
@@ -369,16 +284,18 @@ export const PluginsTab = memo(
 );
 
 const styles = StyleSheet.create({
-  description: {
-    fontSize: 12,
-    lineHeight: 18,
+  cardFilled: {
+    flex: 1,
+  },
+  cardHalf: {
+    width: '50%',
+  },
+  cardRow: {
+    flexDirection: 'row',
+    gap: CARD_GAP,
   },
   emptyList: {
     flexGrow: 1,
-  },
-  details: {
-    flex: 1,
-    marginStart: 16,
   },
   headerRow: {
     alignItems: 'center',
@@ -386,43 +303,23 @@ const styles = StyleSheet.create({
     gap: 12,
     justifyContent: 'space-between',
     minHeight: 48,
+  },
+  listContent: {
+    paddingBottom: 24,
     paddingHorizontal: 16,
+    paddingTop: 4,
   },
-  icon: {
-    borderRadius: 4,
-    height: 44,
-    width: 44,
-  },
-  name: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  pluginRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    minHeight: 64,
-    overflow: 'hidden',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    position: 'relative',
-  },
-  pluginMainContent: {
-    alignItems: 'center',
-    flex: 1,
-    flexDirection: 'row',
-  },
-  pluginRowAction: {
-    bottom: 0,
-    start: 0,
-    position: 'absolute',
-    end: 0,
-    top: 0,
+  listContentWide: {
+    alignSelf: 'center',
+    maxWidth: WIDE_LAYOUT_MAX_CONTENT_WIDTH,
+    width: '100%',
   },
   sectionHeader: {
     flex: 1,
     fontSize: 14,
     fontWeight: '600',
-    paddingVertical: 10,
+    paddingBottom: 4,
+    paddingTop: 8,
   },
   updateAllButton: {
     borderRadius: 24,

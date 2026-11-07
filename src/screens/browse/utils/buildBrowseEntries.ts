@@ -9,6 +9,7 @@ export type SourceEntry =
       type: 'header';
     }
   | {
+      domain: string | null;
       isPinned: boolean;
       key: string;
       plugin: PluginItem;
@@ -37,6 +38,65 @@ const matchesSearch = (plugin: PluginItem, normalizedSearch: string) =>
   plugin.name.toLocaleLowerCase().includes(normalizedSearch) ||
   plugin.id.toLocaleLowerCase().includes(normalizedSearch);
 
+const PROTOCOL_PATTERN = /^https?:\/\//i;
+const WWW_PREFIX_PATTERN = /^www\./i;
+const TRAILING_DOTS_PATTERN = /\.+$/;
+const HOST_TERMINATOR_PATTERN = /[/?#]/;
+// A displayable domain: dot-separated alphanumeric/hyphen labels, no spaces.
+const DOMAIN_PATTERN =
+  /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
+const normalizeHost = (host: string): string =>
+  host
+    .replace(WWW_PREFIX_PATTERN, '')
+    .replace(TRAILING_DOTS_PATTERN, '')
+    .toLowerCase();
+
+const isValidDomain = (host: string): boolean => DOMAIN_PATTERN.test(host);
+
+const parseHostFromUrl = (value: string): string | null => {
+  try {
+    return normalizeHost(new URL(value).hostname);
+  } catch {
+    return null;
+  }
+};
+
+const parseHostFromRawValue = (value: string): string | null => {
+  const withoutProtocol = value.replace(PROTOCOL_PATTERN, '');
+  const authority = withoutProtocol.split(HOST_TERMINATOR_PATTERN, 1)[0] ?? '';
+  const withoutUserInfo = authority.includes('@')
+    ? authority.slice(authority.lastIndexOf('@') + 1)
+    : authority;
+  const withoutPort = withoutUserInfo.split(':', 1)[0] ?? '';
+  return normalizeHost(withoutPort);
+};
+
+const parseDomain = (value?: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+  const urlCandidate = PROTOCOL_PATTERN.test(trimmedValue)
+    ? trimmedValue
+    : `https://${trimmedValue}`;
+  const host =
+    parseHostFromUrl(urlCandidate) ?? parseHostFromRawValue(trimmedValue);
+  return host !== null && isValidDomain(host) ? host : null;
+};
+
+/**
+ * Derives the display domain of a plugin without ever inventing one.
+ * Prefers `plugin.site` and falls back to `plugin.url`; returns null when no
+ * valid host (with at least one dot) can be parsed from either.
+ */
+export const getSourceDomain = (
+  plugin: Pick<PluginItem, 'site' | 'url'>,
+): string | null => parseDomain(plugin.site) ?? parseDomain(plugin.url);
+
 export const buildSourceEntries = ({
   installedPlugins,
   lastUsedPluginId,
@@ -52,6 +112,20 @@ export const buildSourceEntries = ({
       firstPlugin.name.localeCompare(secondPlugin.name),
   );
   const pinnedIds = new Set(pinnedPluginIds);
+  const domains = new Map(
+    sortedPlugins.map(plugin => [plugin.id, getSourceDomain(plugin)]),
+  );
+  const toSourceEntry = (
+    keyPrefix: string,
+    plugin: PluginItem,
+    isPinned: boolean,
+  ): SourceEntry => ({
+    domain: domains.get(plugin.id) ?? null,
+    isPinned,
+    key: `${keyPrefix}-${plugin.id}`,
+    plugin,
+    type: 'source',
+  });
 
   if (normalizedSearch) {
     const searchResults = sortedPlugins.filter(plugin =>
@@ -66,14 +140,8 @@ export const buildSourceEntries = ({
         type: 'header',
         title: getString('browseScreen.searchResults'),
       },
-      ...searchResults.map(
-        plugin =>
-          ({
-            isPinned: pinnedIds.has(plugin.id),
-            key: `search-${plugin.id}`,
-            plugin,
-            type: 'source',
-          } as const),
+      ...searchResults.map(plugin =>
+        toSourceEntry('search', plugin, pinnedIds.has(plugin.id)),
       ),
     ];
   }
@@ -120,12 +188,11 @@ export const buildSourceEntries = ({
         type: 'header',
         title: getString('browseScreen.lastUsed'),
       },
-      {
-        isPinned: pinnedIds.has(lastUsedPlugin.id),
-        key: `last-used-${lastUsedPlugin.id}`,
-        plugin: lastUsedPlugin,
-        type: 'source',
-      },
+      toSourceEntry(
+        'last-used',
+        lastUsedPlugin,
+        pinnedIds.has(lastUsedPlugin.id),
+      ),
     );
   }
 
@@ -136,12 +203,7 @@ export const buildSourceEntries = ({
       title: getString('browseScreen.pinnedPlugins'),
     });
     pinned.forEach(plugin =>
-      result.push({
-        isPinned: true,
-        key: `pinned-${plugin.id}`,
-        plugin,
-        type: 'source',
-      }),
+      result.push(toSourceEntry('pinned', plugin, true)),
     );
   }
 
@@ -155,12 +217,7 @@ export const buildSourceEntries = ({
       });
       previousLanguage = plugin.lang;
     }
-    result.push({
-      isPinned: false,
-      key: `source-${plugin.id}`,
-      plugin,
-      type: 'source',
-    });
+    result.push(toSourceEntry('source', plugin, false));
   });
 
   if (!sortedPlugins.length) {
@@ -301,3 +358,80 @@ export const buildPluginEntries = ({
 
   return result;
 };
+
+export interface CardRowEntry<TEntry extends { key: string }> {
+  entries: TEntry[];
+  key: string;
+  type: 'card-row';
+}
+
+/**
+ * Groups consecutive card entries into rows of `columns` cards so lists can
+ * render a 2-column grid on wide screens. Non-card entries (headers, discover,
+ * empty states) always occupy their own full-width row and interrupt grouping
+ * so cards never pair across sections.
+ */
+const groupConsecutiveCards = <TEntry extends { key: string; type: string }>(
+  entries: readonly TEntry[],
+  columns: number,
+  cardEntryType: TEntry['type'],
+): (TEntry | CardRowEntry<TEntry>)[] => {
+  const rows: (TEntry | CardRowEntry<TEntry>)[] = [];
+  let pendingCards: TEntry[] = [];
+
+  const flushPendingCards = () => {
+    if (!pendingCards.length) {
+      return;
+    }
+    const groupSize = columns > 1 ? columns : 1;
+    for (let index = 0; index < pendingCards.length; index += groupSize) {
+      const cards = pendingCards.slice(index, index + groupSize);
+      rows.push({
+        entries: cards,
+        key: `card-row-${cards.map(card => card.key).join('|')}`,
+        type: 'card-row',
+      });
+    }
+    pendingCards = [];
+  };
+
+  entries.forEach(entry => {
+    if (entry.type === cardEntryType) {
+      pendingCards.push(entry);
+    } else {
+      flushPendingCards();
+      rows.push(entry);
+    }
+  });
+  flushPendingCards();
+
+  return rows;
+};
+
+export type SourceCardEntry = Extract<SourceEntry, { type: 'source' }>;
+
+export type PluginCardEntry = Extract<PluginEntry, { type: 'plugin' }>;
+
+export type SourceListRow =
+  | Exclude<SourceEntry, { type: 'source' }>
+  | CardRowEntry<SourceCardEntry>;
+
+export type PluginListRow =
+  | Exclude<PluginEntry, { type: 'plugin' }>
+  | CardRowEntry<PluginCardEntry>;
+
+export const buildSourceRows = (
+  entries: readonly SourceEntry[],
+  columns: number,
+): SourceListRow[] =>
+  // Only entries with type 'source' are wrapped in rows by the grouping
+  // helper, so the narrower row union always holds at runtime.
+  groupConsecutiveCards(entries, columns, 'source') as SourceListRow[];
+
+export const buildPluginRows = (
+  entries: readonly PluginEntry[],
+  columns: number,
+): PluginListRow[] =>
+  // Only entries with type 'plugin' are wrapped in rows by the grouping
+  // helper, so the narrower row union always holds at runtime.
+  groupConsecutiveCards(entries, columns, 'plugin') as PluginListRow[];

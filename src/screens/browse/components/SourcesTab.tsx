@@ -1,11 +1,11 @@
 import { memo, useCallback, useMemo } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import {
   LegendList,
   LegendListRenderItemProps,
 } from '@legendapp/list/react-native';
 
-import { EmptyView, IconButtonV2 } from '@components';
+import { EmptyView } from '@components';
 import {
   useBrowseSettings,
   useFilteredInstalledPlugins,
@@ -17,10 +17,21 @@ import { BrowseScreenProps } from '@navigators/types';
 import { PluginItem } from '@plugins/types';
 import { getString } from '@i18n/translations';
 import { ThemeColors } from '@theme/types';
-import { getLocaleLanguageName } from '@utils/constants/languages';
 
 import DiscoverCard from '../discover/DiscoverCard';
-import { buildSourceEntries, SourceEntry } from '../utils/buildBrowseEntries';
+import {
+  buildSourceEntries,
+  buildSourceRows,
+  SourceCardEntry,
+  SourceListRow,
+} from '../utils/buildBrowseEntries';
+import {
+  CARD_ESTIMATED_HEIGHT,
+  CARD_GAP,
+  WIDE_LAYOUT_MAX_CONTENT_WIDTH,
+  getBrowseColumns,
+} from '../utils/browseLayout';
+import SourceCard from './SourceCard';
 
 interface SourcesTabProps {
   navigation: BrowseScreenProps['navigation'];
@@ -29,80 +40,6 @@ interface SourcesTabProps {
   theme: ThemeColors;
 }
 
-interface SourceRowProps {
-  isPinned: boolean;
-  onLatestPress: (plugin: PluginItem) => void;
-  onPinPress: (plugin: PluginItem) => void;
-  onPress: (plugin: PluginItem) => void;
-  plugin: PluginItem;
-  theme: ThemeColors;
-}
-
-const SourceRow = memo(
-  ({
-    isPinned,
-    onLatestPress,
-    onPinPress,
-    onPress,
-    plugin,
-    theme,
-  }: SourceRowProps) => (
-    <View style={styles.sourceRow}>
-      <Pressable
-        accessibilityLabel={`${getString('browse')} ${plugin.name}`}
-        accessibilityRole="button"
-        style={styles.sourceRowAction}
-        android_ripple={{ color: theme.rippleColor }}
-        onPress={() => onPress(plugin)}
-      />
-      <View pointerEvents="none" style={styles.sourceMainContent}>
-        <Image
-          source={{ uri: plugin.iconUrl }}
-          style={[styles.icon, { backgroundColor: theme.surfaceVariant }]}
-        />
-        <View style={styles.details}>
-          <Text
-            numberOfLines={1}
-            style={[styles.name, { color: theme.onSurface }]}
-          >
-            {plugin.name}
-          </Text>
-          <Text
-            numberOfLines={1}
-            style={[styles.description, { color: theme.onSurfaceVariant }]}
-          >
-            {getLocaleLanguageName(plugin.lang)}
-          </Text>
-        </View>
-      </View>
-      <Pressable
-        accessibilityLabel={`${getString('browseScreen.latest')} ${
-          plugin.name
-        }`}
-        accessibilityRole="button"
-        style={styles.latestButton}
-        hitSlop={8}
-        onPress={() => onLatestPress(plugin)}
-      >
-        <Text style={[styles.latestText, { color: theme.primary }]}>
-          {getString('browseScreen.latest')}
-        </Text>
-      </Pressable>
-      <IconButtonV2
-        accessibilityLabel={
-          isPinned
-            ? getString('browseScreen.unpinSource', { name: plugin.name })
-            : getString('browseScreen.pinSource', { name: plugin.name })
-        }
-        name={isPinned ? 'pin' : 'pin-outline'}
-        color={isPinned ? theme.primary : theme.onSurfaceVariant}
-        onPress={() => onPinPress(plugin)}
-        theme={theme}
-      />
-    </View>
-  ),
-);
-
 export const SourcesTab = memo(
   ({ navigation, onOpenPlugins, searchText, theme }: SourcesTabProps) => {
     const installedPlugins = useFilteredInstalledPlugins();
@@ -110,6 +47,8 @@ export const SourcesTab = memo(
     const pinnedPlugins = usePinnedPlugins();
     const { setLastUsedPluginId, togglePinPlugin } = usePluginActions();
     const { showMyAnimeList, showAniList } = useBrowseSettings();
+    const { width: windowWidth } = useWindowDimensions();
+    const columns = getBrowseColumns(windowWidth);
 
     const navigateToSource = useCallback(
       (plugin: PluginItem, showLatestNovels?: boolean) => {
@@ -159,8 +98,39 @@ export const SourcesTab = memo(
       showMyAnimeList,
     ]);
 
+    const rows = useMemo(
+      () => buildSourceRows(entries, columns),
+      [entries, columns],
+    );
+
+    const renderSourceCard = useCallback(
+      (entry: SourceCardEntry, fillCard: boolean) => (
+        <SourceCard
+          key={entry.key}
+          domain={entry.domain}
+          isPinned={entry.isPinned}
+          onLatestPress={openLatest}
+          onPinPress={togglePin}
+          onPress={openSource}
+          plugin={entry.plugin}
+          style={fillCard ? styles.cardFilled : styles.cardHalf}
+          theme={theme}
+        />
+      ),
+      [openLatest, openSource, theme, togglePin],
+    );
+
     const renderItem = useCallback(
-      ({ item }: LegendListRenderItemProps<SourceEntry>) => {
+      ({ item }: LegendListRenderItemProps<SourceListRow>) => {
+        if (item.type === 'card-row') {
+          const fillCard = columns === 1 || item.entries.length > 1;
+          return (
+            <View style={styles.cardRow}>
+              {item.entries.map(entry => renderSourceCard(entry, fillCard))}
+            </View>
+          );
+        }
+
         if (item.type === 'header') {
           return (
             <Text
@@ -207,24 +177,15 @@ export const SourcesTab = memo(
           );
         }
 
-        return (
-          <SourceRow
-            plugin={item.plugin}
-            isPinned={item.isPinned}
-            onPress={openSource}
-            onLatestPress={openLatest}
-            onPinPress={togglePin}
-            theme={theme}
-          />
-        );
+        return renderSourceCard(item, true);
       },
-      [navigation, onOpenPlugins, openLatest, openSource, theme, togglePin],
+      [columns, navigation, onOpenPlugins, renderSourceCard, theme],
     );
 
     return (
       <LegendList
-        data={entries}
-        estimatedItemSize={64}
+        data={rows}
+        estimatedItemSize={CARD_ESTIMATED_HEIGHT}
         getItemType={item => item.type}
         keyExtractor={item => item.key}
         ListEmptyComponent={
@@ -233,7 +194,11 @@ export const SourcesTab = memo(
             theme={theme}
           />
         }
-        contentContainerStyle={!entries.length ? styles.emptyList : undefined}
+        contentContainerStyle={[
+          styles.listContent,
+          columns > 1 && styles.listContentWide,
+          !rows.length && styles.emptyList,
+        ]}
         recycleItems
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
@@ -243,18 +208,15 @@ export const SourcesTab = memo(
 );
 
 const styles = StyleSheet.create({
-  description: {
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  details: {
+  cardFilled: {
     flex: 1,
-    marginStart: 16,
   },
-  icon: {
-    borderRadius: 4,
-    height: 44,
-    width: 44,
+  cardHalf: {
+    width: '50%',
+  },
+  cardRow: {
+    flexDirection: 'row',
+    gap: CARD_GAP,
   },
   emptyList: {
     flexGrow: 1,
@@ -262,44 +224,20 @@ const styles = StyleSheet.create({
   inlineEmpty: {
     height: 240,
   },
-  latestButton: {
-    borderRadius: 24,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  listContent: {
+    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 4,
   },
-  latestText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  name: {
-    fontSize: 14,
-    lineHeight: 20,
+  listContentWide: {
+    alignSelf: 'center',
+    maxWidth: WIDE_LAYOUT_MAX_CONTENT_WIDTH,
+    width: '100%',
   },
   sectionHeader: {
     fontSize: 14,
     fontWeight: '600',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  sourceRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    minHeight: 64,
-    overflow: 'hidden',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    position: 'relative',
-  },
-  sourceMainContent: {
-    alignItems: 'center',
-    flex: 1,
-    flexDirection: 'row',
-  },
-  sourceRowAction: {
-    bottom: 0,
-    start: 0,
-    position: 'absolute',
-    end: 0,
-    top: 0,
+    paddingBottom: 4,
+    paddingTop: 8,
   },
 });
