@@ -238,6 +238,12 @@ final class LNReaderUITests: XCTestCase {
     tapWhenReady(["تصفح", "Browse"], 15, "Browse tab missing")
     let sourcesIndicator = element(withIdentifier: "tab-indicator-sources")
     let pluginsIndicator = element(withIdentifier: "tab-indicator-plugins")
+    let sourcesTab = app.buttons["المصادر"].firstMatch.exists
+      ? app.buttons["المصادر"].firstMatch
+      : element(withIdentifier: "browse-tab-sources")
+    let pluginsTab = app.buttons["الإضافات"].firstMatch.exists
+      ? app.buttons["الإضافات"].firstMatch
+      : element(withIdentifier: "browse-tab-plugins")
 
     waitExists(
       sourcesIndicator, 30, "sources tab indicator missing in RTL")
@@ -258,5 +264,55 @@ final class LNReaderUITests: XCTestCase {
       sourcesIndicator, 10,
       "sources tab indicator still active after switching to plugins")
     screenshot("13-browse-rtl-indicator-plugins")
+
+    // Back to Sources, then RAPID alternation — the indicator must never lag
+    // onto the neighbouring tab (P0 acceptance case #4).
+    tapWhenReady(["المصادر", "Sources"], 15, "sources top tab missing")
+    waitSelectedState(sourcesIndicator, sourcesIndicator, pluginsIndicator)
+    screenshot("14-browse-rtl-indicator-sources-again")
+    for _ in 0..<3 {
+      pluginsTab.tap()
+      sourcesTab.tap()
+    }
+    waitSelectedState(sourcesIndicator, sourcesIndicator, pluginsIndicator)
+    screenshot("15-browse-rtl-after-rapid-taps")
+
+    // Library category tabs ("افتراضي" / "محلي") — P0 acceptance case #3.
+    tapWhenReady(["المكتبة", "Library"], 15, "Library tab missing")
+    let defaultIndicator = element(withIdentifier: "tab-indicator-1")
+    let localIndicator = element(withIdentifier: "tab-indicator-2")
+    waitExists(defaultIndicator, 30, "Default category indicator missing")
+    XCTAssertTrue(
+      defaultIndicator.isHittable,
+      "Default category indicator not active under RTL")
+    screenshot("16-library-rtl-indicator-default")
+    if localIndicator.waitForExistence(timeout: 10) {
+      tapWhenReady(["محلي", "Local"], 15, "Local category tab missing")
+      waitExists(localIndicator, 15,
+                 "Local category indicator missing after tap")
+      XCTAssertTrue(
+        localIndicator.isHittable,
+        "Local category indicator not hittable after tap")
+      waitVanishes(defaultIndicator, 10,
+                   "Default indicator still active after selecting Local")
+      screenshot("17-library-rtl-indicator-local")
+    }
+  }
+
+  /// Asserts exactly one of the two indicators is in the accessibility tree
+  /// and it is the expected one (state-truth, RTL-agnostic).
+  private func waitSelectedState(
+    _ expected: XCUIElement, _ a: XCUIElement, _ b: XCUIElement
+  ) {
+    let deadline = Date().addingTimeInterval(20)
+    while Date() < deadline {
+      if expected.exists && expected.isHittable && !(a.exists && b.exists) {
+        return
+      }
+      sleep(1)
+    }
+    XCTAssertTrue(
+      expected.exists && expected.isHittable && !(a.exists && b.exists),
+      "expected exactly one active indicator and it must be the tapped tab")
   }
 }

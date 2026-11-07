@@ -237,8 +237,16 @@ jobs:
           # accessibility subsystem before the runner attaches. 45s covers
           # the slow RN cold start observed on iPad 7th gen / iOS 18.5
           # (rendering completes ~2min after first boot on busy runners).
-          xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || true
+          # --console-pty streams the app's stdout/stderr (ReactNativeJS logs,
+          # JS exceptions, native fatal errors) into app-console.log: if the
+          # app ever boots to a white screen, this file names the exact throw.
+          nohup xcrun simctl launch --console-pty "$SIM_UDID" "$BUNDLE_ID" \
+            </dev/null > app-console.log 2>&1 &
+          disown || true
           sleep 45
+          xcrun simctl io "$SIM_UDID" screenshot boot-smoke.png || true
+          echo "== app console (tail 100) =="
+          tail -n 100 app-console.log || true
           xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" 2>/dev/null || true
           sleep 5
 
@@ -316,6 +324,8 @@ jobs:
           cp xcodebuild-sim.log artifacts/ 2>/dev/null || true
           cp xcodebuild-e2e.log artifacts/ 2>/dev/null || true
           cp ios/pod-install.log artifacts/ 2>/dev/null || true
+          cp app-console.log artifacts/ 2>/dev/null || true
+          cp boot-smoke.png artifacts/ 2>/dev/null || true
           ls -R artifacts || true
 
       - name: Upload simulator artifacts (screenshots · logs)
