@@ -3,12 +3,20 @@ name: iOS Simulator Test
 # ---------------------------------------------------------------------------
 # Runs ONLY after a successful iOS IPA build (workflow_run gate) — IPA first,
 # simulator second, per release discipline. Builds the app for the simulator,
-# boots an iPad (7th gen) on iOS 18.5 when available, installs, and runs REAL
-# interaction tests (XCUITest): onboarding, tab navigation, language switch
-# to Arabic (RTL rebuild), reader tap-to-toggle chrome, color picker.
+# boots a LIGHT iPhone simulator on the newest preinstalled iOS runtime,
+# installs, and runs REAL interaction tests (XCUITest): onboarding, tab
+# navigation, language switch to Arabic (RTL rebuild), reader tap-to-toggle
+# chrome, color picker.
 #
-# Runtime choice: iOS 18.5 exactly matches the target device
-# (iPad 7th generation 2019, iPadOS 18.5, A10 Fusion).
+# Runtime choice (fix for the "Rendered but AX-dead" failures, runs #15-#23):
+# the macos-26 image pairs Xcode 26 with iOS 26.x runtimes; driving an iOS
+# 18.5 runtime from Xcode 26's testmanagerd leaves the runner's accessibility
+# snapshot dead forever (app renders fine — boot-smoke.png proved it — but
+# every AX query returns nothing, so all UI gates fail). Using the
+# Xcode-MATCHED runtime restores a healthy AX bridge. Device: a light iPhone
+# sim boots faster than the A10-era iPad type and satisfies every gate in
+# this suite (bottom tabs, RTL indicator, reader chrome are device-agnostic);
+# real iPad-7/iPadOS-18.5 fidelity is covered by the user's physical device.
 # ---------------------------------------------------------------------------
 
 on:
@@ -29,7 +37,7 @@ env:
   CI: 'true'
   EXPO_NO_TELEMETRY: '1'
   BUNDLE_ID: com.rajarsheechatterjee.LNReader
-  SIM_NAME: lnreader-test-ipad
+  SIM_NAME: lnreader-test-sim
 
 jobs:
   await-ipa:
@@ -53,7 +61,7 @@ jobs:
         run: echo "Manual run on ${{ github.ref_name }} — upstream gate not applicable"
 
   simulator-test:
-    name: iPad 7th gen · iOS 18.5 · interaction tests
+    name: iOS sim · interaction tests
     needs: await-ipa
     runs-on: macos-26
     timeout-minutes: 150
@@ -162,49 +170,35 @@ jobs:
           test -f "$APP/ReaderAssets/fonts/lato.ttf" || { echo "MISSING fonts"; exit 1; }
           echo "ReaderAssets present in simulator app bundle ✓"
 
-      - name: Create + boot iPad (7th generation) on newest iOS runtime
+      - name: Create + boot a light iPhone on the newest preinstalled runtime
         run: |
           set -x
-          # Prefer the exact target runtime (18.5), then any 18.x. NOTE: the
-          # macos-26 runner image no longer ships iOS 18.x runtimes (only
-          # 26.1-26.5 — see run #15 logs), so launch testing falls back to
-          # the newest available iOS runtime. Device compatibility with
-          # iPadOS 18.5 is guaranteed by MinOS 16.4 <= 18.5 + arm64 (verified
-          # in the IPA pipeline), not by the simulator runtime version.
-          # Target-device fidelity: try to fetch the exact iOS 18.5 runtime
-          # (iPad 7th gen ships iPadOS 18.5). Non-fatal when unavailable.
-          if ! xcrun simctl list runtimes | grep -q 'iOS 18.5'; then
-            xcodebuild -downloadPlatform iOS -buildVersion 18.5 || \
-              echo "::warning::iOS 18.5 runtime unavailable — using fallback"
-          fi
-          RUNTIME=$(xcrun simctl list runtimes | grep 'iOS 18.5' | grep -oE 'com\.apple\.CoreSimulator\.SimRuntime\.iOS-18-5' || true)
-          if [ -z "$RUNTIME" ]; then
-            RUNTIME=$(xcrun simctl list runtimes | grep -E 'iOS 18\.' | tail -1 | grep -oE 'com\.apple\.CoreSimulator\.SimRuntime\.iOS-18-[0-9]+' || true)
-          fi
-          if [ -z "$RUNTIME" ]; then
-            RUNTIME=$(xcrun simctl list runtimes | grep -oE 'com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9]+-[0-9]+' | tail -1)
-          fi
+          # NEWEST PREINSTALLED runtime only (Xcode-26-matched => healthy AX
+          # bridge). Do NOT download iOS 18.x here: -downloadPlatform cost
+          # minutes and failed transiently, and the Xcode-26 toolchain's AX
+          # snapshot against an 18.5 sim is the exact bug this fix removes.
+          RUNTIME=$(xcrun simctl list runtimes | grep -oE 'com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9]+-[0-9]+' | sort -V | tail -1)
           echo "Using runtime: $RUNTIME"
+          test -n "$RUNTIME" || { echo "::error::no iOS runtime available"; exit 1; }
 
-          # NOTE: the human-readable devicetype line is
-          #   "iPad (7th generation) (com.apple.CoreSimulator.SimDeviceInfoType.…)"
-          # — the NAME ITSELF contains parentheses, so a generic
-          # 'extract second paren group' sed grabs "7th generation" (run #15:
-          # 'Invalid device type: 7th generation'). Extract the identifier
-          # directly instead.
-          # The identifier token in `simctl list devicetypes` output is
-          # "SimDeviceType" (run #19 confirmed SimDeviceInfoType never
-          # matches — result was an empty DEVICE_TYPE).
-          DEVICE_TYPE=$(xcrun simctl list devicetypes | grep 'iPad (7th generation)' | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+' | head -1 || true)
+          # Light device first: iPhone 16e/16/17 boot fastest and satisfy
+          # every gate in this suite (bottom tabs, RTL indicator, reader
+          # chrome are device-agnostic). Fall back to any iPhone, then iPad.
+          DEVICE_TYPE=""
+          for CANDIDATE in 'iPhone 16e' 'iPhone 16' 'iPhone 17' 'iPhone 15'; do
+            HIT=$(xcrun simctl list devicetypes | grep -F "($CANDIDATE)" | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+' | head -1 || true)
+            if [ -n "$HIT" ]; then DEVICE_TYPE="$HIT"; break; fi
+          done
           if [ -z "$DEVICE_TYPE" ]; then
-            # Newer runtimes may drop the A10-era device type — any iPad
-            # satisfies the launch/stability smoke test; the actually used
-            # device+runtime pair is recorded in SIM_RUNTIME_USED.
+            DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -E '\(com\.apple\.CoreSimulator\.SimDeviceType\.iPhone' | head -1 | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+' || true)
+          fi
+          if [ -z "$DEVICE_TYPE" ]; then
             DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -E '\(com\.apple\.CoreSimulator\.SimDeviceType\.iPad' | head -1 | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+' || true)
           fi
           echo "Device type: $DEVICE_TYPE"
-          test -n "$DEVICE_TYPE" || { echo "::error::no iPad devicetype found"; exit 1; }
+          test -n "$DEVICE_TYPE" || { echo "::error::no iPhone/iPad devicetype found"; exit 1; }
 
+          xcrun simctl delete "$SIM_NAME" 2>/dev/null || true
           xcrun simctl create "$SIM_NAME" "$DEVICE_TYPE" "$RUNTIME"
           echo "SIM_RUNTIME_USED=$RUNTIME" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM_NAME"
@@ -232,20 +226,13 @@ jobs:
           xcrun simctl terminate "$SIM_NAME" "$BUNDLE_ID" 2>/dev/null || true
 
           # Force-enable the accessibility subsystem inside the simulator
-          # BEFORE any launch. On macOS-26 runners the freshly-booted iPad
-          # sim repeatedly presents a fully-rendered UI (see boot-smoke.png)
-          # while the runner's AX snapshot stays empty forever — the exact
-          # "Rendered but AX-dead" signature. These two preference keys are
-          # the documented workaround.
+          # BEFORE any launch. Belt-and-braces: with the Xcode-matched runtime
+          # the AX bridge is healthy; these keys just make that explicit.
           xcrun simctl spawn "$SIM_NAME" defaults write com.apple.Accessibility AccessibilityEnabled -bool YES 2>/dev/null || true
           xcrun simctl spawn "$SIM_NAME" defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool YES 2>/dev/null || true
 
-          # AX warmup: a freshly booted simulator frequently times out the UI
-          # test runner with "Timed out waiting for AX loaded notification".
-          # Launching the app once and letting it settle initializes the
-          # accessibility subsystem before the runner attaches. 45s covers
-          # the slow RN cold start observed on iPad 7th gen / iOS 18.5
-          # (rendering completes ~2min after first boot on busy runners).
+          # AX warmup: launch the app once and let it settle so the
+          # accessibility subsystem initializes before the runner attaches.
           # --console-pty streams the app's stdout/stderr (ReactNativeJS logs,
           # JS exceptions, native fatal errors) into app-console.log: if the
           # app ever boots to a white screen, this file names the exact throw.
@@ -286,9 +273,8 @@ jobs:
               sleep 5
               ATTEMPT=$((ATTEMPT+1))
             elif grep -qE "(UI gate failed|did not render)" ../xcodebuild-e2e.log; then
-              # Rendered-but-AX-dead launch gate: the app UI is up (screenshot
-              # evidence) while the accessibility tree is still initializing
-              # on the slow iPad sim. Warm up longer and retry.
+              # Rendered-but-AX-dead launch gate: app UI is up (screenshot
+              # evidence) while the AX tree lags. Warm up longer and retry.
               echo "::warning::launch-gate AX lag (attempt $ATTEMPT) — extended warmup + retry"
               xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || true
               sleep 60
