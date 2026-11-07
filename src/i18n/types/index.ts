@@ -3,6 +3,10 @@
  */
 
 export interface StringMap {
+  'aboutScreen.appName': 'string';
+  'aboutScreen.appTagline': 'string';
+  'aboutScreen.basedOn': 'string';
+  'aboutScreen.readerEngine': 'string';
   'aboutScreen.website': 'string';
   'aboutScreen.discord': 'string';
   'aboutScreen.github': 'string';

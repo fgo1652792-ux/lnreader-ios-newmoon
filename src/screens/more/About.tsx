@@ -17,6 +17,10 @@ const RELEASE_DATE = Config.RELEASE_DATE;
 const BUILD_TYPE = Config.BUILD_TYPE;
 /* eslint-enable import/no-named-as-default-member */
 
+// Upstream projects Moon novels is built on (legal attribution — do not remove).
+const LNREADER_REPO_URL = 'https://github.com/lnreader/lnreader';
+const NEW_MOON_REPO_URL = 'https://github.com/ZeUsx313/New-moon-2';
+
 const AboutScreen = ({ navigation }: AboutScreenProps) => {
   const theme = useTheme();
 
@@ -43,6 +47,12 @@ const AboutScreen = ({ navigation }: AboutScreenProps) => {
       />
       <ScrollView style={styles.flex}>
         <List.Section>
+          {/* Moon novels identity */}
+          <List.Item
+            title={getString('aboutScreen.appName')}
+            description={getString('aboutScreen.appTagline')}
+            theme={theme}
+          />
           <List.Item
             title={getString('aboutScreen.version')}
             description={getBuildName()}
@@ -74,11 +84,15 @@ const AboutScreen = ({ navigation }: AboutScreenProps) => {
             theme={theme}
           />
           <List.Item
-            title={getString('aboutScreen.github')}
-            description="https://github.com/lnreader/lnreader"
-            onPress={() =>
-              Linking.openURL('https://github.com/lnreader/lnreader')
-            }
+            title={getString('aboutScreen.basedOn')}
+            description={LNREADER_REPO_URL}
+            onPress={() => Linking.openURL(LNREADER_REPO_URL)}
+            theme={theme}
+          />
+          <List.Item
+            title={getString('aboutScreen.readerEngine')}
+            description={`New-moon-2 — ${NEW_MOON_REPO_URL}`}
+            onPress={() => Linking.openURL(NEW_MOON_REPO_URL)}
             theme={theme}
           />
           <List.Item

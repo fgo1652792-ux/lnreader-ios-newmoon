@@ -1,5 +1,9 @@
 {
   "aboutScreen": {
+    "appName": "Moon novels | قمر الروايات",
+    "appTagline": "Read under the moonlight",
+    "basedOn": "Based on LNReader",
+    "readerEngine": "Reader engine",
     "website": "Website",
     "discord": "Discord",
     "github": "GitHub",
@@ -38,7 +42,7 @@
     "recreateDBIndexesToast": "Recreated DB indexes",
     "recreateDBIndexesDialogTitle": "All DB indexes will be recreated.\nThis may take a while.",
     "recreateDBIndexesDesc": "Recreates DB indexes. This may improve performance on slower devices.",
-    "restartRequired": "Restart LNReader to apply this change.",
+    "restartRequired": "Restart Moon novels to apply this change.",
     "shareCrashLogs": "Share crash logs",
     "shareCrashLogsDescription": "Create a diagnostic report with app, device, plugin, exception, and app-accessible logcat information.",
     "shareCrashLogsFailed": "Failed to create crash logs."
@@ -298,7 +302,7 @@
   "repositories": {
     "disable": "Disable",
     "disableTitle": "Disable repository?",
-    "disableWarning": "LNReader will stop checking %{name}. Its plugins will be hidden unless another enabled repository provides them. Installed plugins will remain installed.",
+    "disableWarning": "Moon novels will stop checking %{name}. Its plugins will be hidden unless another enabled repository provides them. Installed plugins will remain installed.",
     "emptyMsg": "You have no repositories. Add your first plugin repository to get started.",
     "toggle": "Toggle %{name} repository",
     "deleteRepository": "Delete repository",

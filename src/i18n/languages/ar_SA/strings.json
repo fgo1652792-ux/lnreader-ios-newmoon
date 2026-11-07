@@ -1,5 +1,9 @@
 {
   "aboutScreen": {
+    "appName": "قمر الروايات | Moon novels",
+    "appTagline": "اقرأ تحت ضوء القمر",
+    "basedOn": "مبني على LNReader",
+    "readerEngine": "محرك القراءة",
     "website": "الموقع",
     "discord": "ديس كورد",
     "github": "Arabic",
@@ -38,7 +42,7 @@
     "recreateDBIndexesToast": "تمت إعادة إنشاء فهارس قاعدة البيانات",
     "recreateDBIndexesDialogTitle": "سيتم إعادة إنشاء جميع فهارس قاعدة البيانات.\nقد يستغرق هذا بعض الوقت.",
     "recreateDBIndexesDesc": "يعيد إنشاء فهارس قاعدة البيانات. قد يؤدي هذا إلى تحسين الأداء على الأجهزة الأبطأ.",
-    "restartRequired": "أعد تشغيل LNReader لتطبيق هذا التغيير.",
+    "restartRequired": "أعد تشغيل قمر الروايات لتطبيق هذا التغيير.",
     "shareCrashLogs": "مشاركة سجلات الأعطال",
     "shareCrashLogsDescription": "إنشاء تقرير تشخيصي يتضمن معلومات التطبيق والجهاز والإضافات والاستثناء والسجلات المتاحة للتطبيق.",
     "shareCrashLogsFailed": "تعذّر إنشاء سجلات الأعطال."
@@ -298,7 +302,7 @@
   "repositories": {
     "disable": "تعطيل",
     "disableTitle": "تعطيل المستودع؟",
-    "disableWarning": "سيتوقف LNReader عن فحص %{name}. ستُخفى إضافاته ما لم يوفرها مستودع آخر مفعَّل. ستظل الإضافات المثبتة مثبتة.",
+    "disableWarning": "سيتوقف قمر الروايات عن فحص %{name}. ستُخفى إضافاته ما لم يوفرها مستودع آخر مفعَّل. ستظل الإضافات المثبتة مثبتة.",
     "emptyMsg": "ليس لديك مستودعات. أضف مستودع الإضافات الأول لتبدأ.",
     "toggle": "تبديل مستودع %{name}",
     "deleteRepository": "حذف المستودع",

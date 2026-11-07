@@ -39,7 +39,7 @@ const assetsUriPrefix = getReaderAssetsPrefix();
 
 const novel = {
   'artist': null,
-  'author': 'LNReader-kun',
+  'author': 'Moon novels',
   'cover':
     'file:///storage/emulated/0/Android/data/com.rajarsheechatterjee.LNReader/files/Novels/lightnovelcave/16/cover.png?1717862123181',
   'genres': 'Action,Hero',

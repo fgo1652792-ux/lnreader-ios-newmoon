@@ -20,7 +20,9 @@ const CrashRecoveryGate = ({ children }: PropsWithChildren) => {
 
   const crashError = useMemo(() => {
     if (!pendingCrash) return null;
-    const error = new Error('LNReader stopped unexpectedly on its last run.');
+    const error = new Error(
+      'Moon novels stopped unexpectedly on its last run.',
+    );
     error.stack = pendingCrash;
     return error;
   }, [pendingCrash]);

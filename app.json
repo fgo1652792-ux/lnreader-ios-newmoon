@@ -1,7 +1,7 @@
 {
   "expo": {
-    "version": "2.1.4",
-    "name": "LNReader",
+    "version": "2.2.0",
+    "name": "Moon novels",
     "slug": "LNReader",
     "scheme": "lnreader",
     "icon": "./assets/native/ic_launcher.png",
@@ -11,7 +11,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/native/ic_launcher_round.png",
-          "backgroundColor": "#1D1B20",
+          "backgroundColor": "#000000",
           "resizeMode": "contain",
           "dark": {
             "image": "./assets/native/ic_launcher_round.png",
@@ -19,12 +19,12 @@
           },
           "android": {
             "image": "./assets/native/splash_icon.png",
-            "backgroundColor": "#132C33",
+            "backgroundColor": "#000000",
             "imageWidth": 288,
             "resizeMode": "native",
             "dark": {
               "image": "./assets/native/splash_icon.png",
-              "backgroundColor": "#132C33"
+              "backgroundColor": "#000000"
             }
           }
         }
@@ -93,6 +93,7 @@
     "ios": {
       "bundleIdentifier": "com.rajarsheechatterjee.LNReader",
       "infoPlist": {
+        "CFBundleDisplayName": "Moon novels",
         "UIBackgroundModes": [
           "audio"
         ],
