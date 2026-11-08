@@ -259,15 +259,17 @@ final class LNReaderUITests: XCTestCase {
     tapWhenReady(["الخلفية والألوان"], 15, "engine colors panel tab missing")
     sleep(1)
     screenshot("07-engine-colors-panel")
-    let blackPreset = app.buttons["أسود"].firstMatch
-    if blackPreset.waitForExistence(timeout: 10) {
-      blackPreset.tap()
+    // Preset buttons aggregate the 'Aa' sample + the name into one AX label
+    // ("Aa فحمي") — match by loose containment, evidenced present in the
+    // decisive dump (ax-tree-engine-preset-missing.txt).
+    let presetPred = NSPredicate(format: "label CONTAINS %@", "فحمي")
+    let preset = app.descendants(matching: .any)
+      .matching(presetPred).firstMatch
+    if preset.waitForExistence(timeout: 10) {
+      preset.tap()
     } else {
-      let fallback = tappable(["أسود", "Black"])
-      if fallback == nil {
-        dumpAXTree("ax-tree-engine-preset-missing")
-      }
-      tapWhenReady(["أسود", "Black"], 15, "engine theme preset missing")
+      dumpAXTree("ax-tree-engine-preset-missing")
+      XCTFail("UI gate failed: engine theme preset missing")
     }
     sleep(2)
     screenshot("07-theme-black-applied")
