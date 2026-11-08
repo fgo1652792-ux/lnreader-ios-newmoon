@@ -114,11 +114,11 @@ const FocusedTabItem = <T extends Route>({
   return (
     <View
       style={styles.tabItemWrapper}
-      // Deterministic handle for XCUITest + an AX name for the whole tab
-      // (tab-view's own label pipeline can produce label-less elements when
-      // `label: () => null`, e.g. icon-only tab bars).
+      // Deterministic XCUITest handle ONLY. No accessibilityLabel here: an
+      // AX label on this wrapper aggregates the inner TabBarItem button and
+      // turns the tab into a non-hittable "Other" element (regression seen
+      // in the RTL tap test). testID does not affect the AX tree.
       testID={`tab-item-${route.key}`}
-      accessibilityLabel={route.title ?? route.key}
     >
       <TabBarItem
         {...tabBarItemProps}
