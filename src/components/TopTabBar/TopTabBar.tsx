@@ -112,7 +112,14 @@ const FocusedTabItem = <T extends Route>({
   const focused = isRouteFocused(navigationState, route.key);
 
   return (
-    <View style={styles.tabItemWrapper}>
+    <View
+      style={styles.tabItemWrapper}
+      // Deterministic handle for XCUITest + an AX name for the whole tab
+      // (tab-view's own label pipeline can produce label-less elements when
+      // `label: () => null`, e.g. icon-only tab bars).
+      testID={`tab-item-${route.key}`}
+      accessibilityLabel={route.title ?? route.key}
+    >
       <TabBarItem
         {...tabBarItemProps}
         navigationState={navigationState}

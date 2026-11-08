@@ -47,6 +47,9 @@ final class LNReaderUITests: XCTestCase {
     let desc = app.debugDescription
     let url = URL(fileURLWithPath: "\(Self.shotsDir)/\(name).txt")
     try? desc.write(to: url, atomically: true, encoding: .utf8)
+    // Screenshot of the exact same moment — proves whether the UI renders
+    // visually while the AX tree is (or is not) missing elements.
+    screenshot("\(name)-screen")
     let attachment = XCTAttachment(string: desc)
     attachment.name = name
     attachment.lifetime = .keepAlways
@@ -243,7 +246,15 @@ final class LNReaderUITests: XCTestCase {
     waitExists(settingsFab, 15, "settings FAB missing")
     settingsFab.tap()
     sleep(2)
-    tapWhenReady(["السمة", "Theme"], 15, "Theme tab missing")
+    // Deterministic identifier first (tab-item-<key> on TopTabBar items),
+    // then the AX label.
+    let themeTab = element(withIdentifier: "tab-item-theme")
+    if themeTab.waitForExistence(timeout: 10) {
+      themeTab.tap()
+    } else {
+      dumpAXTree("ax-tree-theme-tab-by-id-missing")
+      tapWhenReady(["السمة", "Theme"], 15, "Theme tab missing")
+    }
     sleep(1)
     tapWhenReady(["أسود", "Black"], 15, "black theme preset missing")
     sleep(2)
