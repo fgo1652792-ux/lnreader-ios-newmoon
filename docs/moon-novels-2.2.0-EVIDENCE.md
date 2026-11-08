@@ -122,3 +122,27 @@ New-moon-2" credit; version 2.2.0.
   artifact (empty tree ⇒ runner-level AX problem; populated ⇒ query mismatch).
 - Bottom tabs + onboarding Complete now expose deterministic `testID`s;
   reader-settings e2e section synced with the batch-1 New Moon settings UI.
+
+## FINAL RESULTS (2026-11-08)
+
+| Deliverable | Result | Link |
+|---|---|---|
+| Simulator interaction suite (XCUITest, iPhone 17 Pro / iOS 26.5) | ✅ 4/4 tests passed | run 42450135720 |
+| Unsigned device IPA (arm64, quality-gated) | ✅ artifact `LNReader-ios-unsigned-ipa` (~23.4 MB) | run 42454059831 |
+| Branch tip | `d1a54c25` | moonnovels/release-2.2.0 |
+| Rollback point | tag `rollback/2.1.4-good-ipa` @ `0a10815c` | — |
+
+Simulator suite coverage (all green): AX-tree probe · onboarding → language
+switch to Arabic (runtime reload + relaunch) → RTL UI assertion → reader
+settings preview (real worShell) → engine dock → colors panel → theme preset
+applied live · repeated-navigation stress · RTL top-tab indicator sync
+(sources ⟷ plugins, rapid taps, library categories).
+
+Engine a11y fixes that fell out of the e2e evidence loop: dock panel tabs
+got aria-labels (icon-only compact mode previously left them unnamed).
+
+Known limitation (documented, non-blocking): gorhom bottom-sheet content
+(settings sheet) renders correctly but is pruned from the iOS 26 XCUITest AX
+snapshot — open-sheet screenshot + AX dump pair in the artifacts proves the
+UI itself is correct; the theme path is therefore e2e-driven through the
+engine's own WebView panel (which IS AX-exposed) until upstream fixes it.
