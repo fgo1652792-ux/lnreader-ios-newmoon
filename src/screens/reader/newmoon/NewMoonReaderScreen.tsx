@@ -871,16 +871,15 @@ const NewMoonReaderScreen = ({
   const startTranslation = useCallback(
     async (chap?: ChapterInfo) => {
       const st = transStateRef.current;
-      const target = chap
-        ? {
-            chap,
-            wNum: wNumMapRef.current.get(chap.id)
-              ? orderedRef.current.findIndex(c => c.id === chap.id) + 1
-              : currentWNumRef.current,
-          }
-        : null;
-      const wNum = target ? target.wNum : st.wNum ?? currentWNumRef.current;
-      const chapter = target?.chap ?? wNumMapRef.current.get(wNum);
+      // Resolve the shell position of the chapter being translated.
+      let wNum: number;
+      if (chap) {
+        const idx = orderedRef.current.findIndex(c => c.id === chap.id);
+        wNum = idx >= 0 ? idx + 1 : currentWNumRef.current;
+      } else {
+        wNum = st.wNum ?? currentWNumRef.current;
+      }
+      const chapter = chap ?? wNumMapRef.current.get(wNum);
       const segments = st.segments;
       if (!chapter || !segments || st.chapterId !== chapter.id) {
         return;

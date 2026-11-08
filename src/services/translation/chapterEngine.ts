@@ -432,7 +432,9 @@ export class ChapterTranslationEngine {
   /**
    * Zeus priority() — visible paragraphs first, then near-viewport, then far.
    * Title (p0) is always tier 0. Tier-0 encodes as index (<10000) so the
-   * visible-run check stays a single comparison.
+   * visible-run check stays a single comparison. Assumption: a chapter with
+   * ≥10 000 paragraphs would alias into tier 1 — unrealistic (that is a
+   * multi-megabyte chapter), same headroom as Zeus's viewport math.
    */
   private priority(segment: TranslationSegment, index: number): number {
     if (segment.id === 'p0' || !this.visible) {
