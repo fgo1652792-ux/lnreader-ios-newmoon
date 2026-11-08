@@ -86,3 +86,53 @@ jest.mock('@modules/native-zip-archive', () => ({
     remoteZip: jest.fn().mockResolvedValue(''),
   },
 }));
+
+// Translation module natives (Zeus engine port): op-sqlite, secure storage,
+// MMKV. The in-memory MMKV keeps reader/translation prefs tests functional.
+jest.mock('@op-engineering/op-sqlite', () => ({
+  __esModule: true,
+  open: jest.fn(() => ({
+    execute: jest.fn(async () => ({ rows: [], rowsAffected: 0 })),
+    executeSync: jest.fn(() => ({ rows: [], rowsAffected: 0 })),
+    executeBatch: jest.fn(async () => ({})),
+  })),
+}));
+
+jest.mock('expo-secure-store', () => ({
+  __esModule: true,
+  getItemAsync: jest.fn(async () => null),
+  setItemAsync: jest.fn(async () => undefined),
+  deleteItemAsync: jest.fn(async () => undefined),
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 1,
+}));
+
+const mockMMKVMemory = new Map();
+const mockMMKVInstance = () => ({
+  getString: jest.fn(key => mockMMKVMemory.get(key)),
+  set: jest.fn((key, value) => mockMMKVMemory.set(key, value)),
+  delete: jest.fn(key => mockMMKVMemory.delete(key)),
+  remove: jest.fn(key => mockMMKVMemory.delete(key)),
+  contains: jest.fn(key => mockMMKVMemory.has(key)),
+  getAllKeys: jest.fn(() => Array.from(mockMMKVMemory.keys())),
+  clearAll: jest.fn(() => mockMMKVMemory.clear()),
+  recrypt: jest.fn(),
+  getStringSync: jest.fn(key => mockMMKVMemory.get(key)),
+  setSync: jest.fn((key, value) => mockMMKVMemory.set(key, value)),
+});
+const mockUseMMKV = (key, setter) => {
+  const current = mockMMKVMemory.get(key);
+  return [
+    current === undefined ? setter : JSON.parse(current),
+    value => {
+      mockMMKVMemory.set(key, JSON.stringify(value));
+    },
+  ];
+};
+jest.mock('react-native-mmkv', () => ({
+  __esModule: true,
+  createMMKV: jest.fn(() => mockMMKVInstance()),
+  useMMKVString: (key, setter) => mockUseMMKV(key, setter),
+  useMMKVNumber: (key, setter) => mockUseMMKV(key, setter),
+  useMMKVBoolean: (key, setter) => mockUseMMKV(key, setter),
+  useMMKVObject: (key, setter) => mockUseMMKV(key, setter),
+}));

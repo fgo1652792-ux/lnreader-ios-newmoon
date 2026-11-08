@@ -1,0 +1,558 @@
+import {
+  type AIChoice,
+  type AIProviderConfiguration,
+} from './providerTypes';
+import { TranslationFailure } from './types';
+import {
+  httpObject,
+  httpSend,
+  nested,
+  parseGoogleRPC,
+  validateEndpoint,
+  validateStatus,
+  type TransportResponse,
+} from './transport';
+
+// Port of Zeus Ascent Edition: ZEUSNext/AIProviderService.swift.
+// Provider discovery + generation for four kinds. Private account protocols
+// (ChatGPT/Gemini web sessions) are best-effort ports of the Swift code and
+// may break when the upstream web app changes — same caveat as Zeus.
+
+const uuid = (): string =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+
+const bearer = (secret: string): Record<string, string> =>
+  secret.length > 0 ? { Authorization: `Bearer ${secret}` } : {};
+
+// ---- OpenAI-compatible ------------------------------------------------------
+
+const discoverOpenAICompatible = async (
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<AIChoice[]> => {
+  const url = validateEndpoint(config.baseURL, 'models');
+  const value = (await httpObject(url.toString(), { headers: bearer(secret) })) as {
+    data?: { id?: unknown; name?: unknown }[];
+  };
+  return ((value?.data as { id?: unknown; name?: unknown }[]) ?? [])
+    .filter(row => typeof row?.id === 'string')
+    .map(row => ({ id: row.id as string, name: typeof row.name === 'string' ? row.name : (row.id as string) }))
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
+};
+
+// ---- Gemini API (official) --------------------------------------------------
+
+const discoverGeminiAPI = async (secret: string): Promise<AIChoice[]> => {
+  const models: AIChoice[] = [];
+  let page: string | null = null;
+  do {
+    const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
+    url.searchParams.set('pageSize', '100');
+    if (page) url.searchParams.set('pageToken', page);
+    const value = (await httpObject(url.toString(), {
+      headers: { 'x-goog-api-key': secret },
+    })) as {
+      models?: { name?: unknown; displayName?: unknown; supportedGenerationMethods?: unknown }[];
+      nextPageToken?: unknown;
+    };
+    for (const model of value?.models ?? []) {
+      const name = typeof model?.name === 'string' ? model.name : '';
+      const methods = Array.isArray(model?.supportedGenerationMethods)
+        ? (model.supportedGenerationMethods as unknown[])
+        : [];
+      if (name && methods.includes('generateContent')) {
+        models.push({
+          id: name.replace(/models\//g, ''),
+          name: typeof model.displayName === 'string' ? model.displayName : name,
+        });
+      }
+    }
+    page = typeof value?.nextPageToken === 'string' ? value.nextPageToken : null;
+  } while (page !== null && models.length < 500);
+  return models;
+};
+
+const generateGeminiAPI = async (
+  prompt: string,
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<string> => {
+  if (!/^[A-Za-z0-9._-]+$/.test(config.model)) {
+    throw new TranslationFailure('معرّف النموذج غير صالح.');
+  }
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent`;
+  const value = (await httpObject(url, {
+    method: 'POST',
+    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+    headers: { 'x-goog-api-key': secret },
+  })) as {
+    candidates?: { content?: { parts?: { text?: unknown }[] } }[];
+  };
+  const parts = value?.candidates?.[0]?.content?.parts ?? [];
+  const result = parts
+    .map(part => (typeof part?.text === 'string' ? part.text : ''))
+    .join('');
+  if (!result) {
+    throw new TranslationFailure('لم يُرجع Gemini نصًا؛ قد يكون المحتوى مرفوضًا أو الحد مستنفدًا.');
+  }
+  return result;
+};
+
+// ---- ChatGPT account (backend-api protocol) ---------------------------------
+
+const CHATGPT_BASE = 'https://android.chat.openai.com/backend-api/';
+
+// chatGPTHeaders — decode the access token JWT to extract the account id and
+// enforce expiry, then emit the mobile-client header set (verbatim port).
+const chatGPTHeaders = (secret: string): Record<string, string> => {
+  const parts = secret.trim().split('.');
+  if (parts.length !== 3) {
+    throw new TranslationFailure(
+      'أدخل Access Token لحساب ChatGPT؛ مفتاح API يُستخدم مع مزود OpenAI المتوافق.',
+    );
+  }
+  let encoded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+  encoded += '='.repeat((4 - (encoded.length % 4)) % 4);
+  let claims: Record<string, unknown>;
+  try {
+    claims = JSON.parse(atobUnicode(encoded));
+  } catch {
+    throw new TranslationFailure('لم يتضمن الرمز معرّف حساب ChatGPT.');
+  }
+  const auth = claims['https://api.openai.com/auth'] as Record<string, unknown> | undefined;
+  const account = auth?.chatgpt_account_id;
+  if (typeof account !== 'string') {
+    throw new TranslationFailure('لم يتضمن الرمز معرّف حساب ChatGPT.');
+  }
+  if (typeof claims.exp === 'number' && claims.exp * 1000 < Date.now()) {
+    throw new TranslationFailure('انتهت صلاحية رمز ChatGPT. أدخل رمزًا جديدًا.');
+  }
+  return {
+    Authorization: `Bearer ${secret}`,
+    'ChatGPT-Account-ID': account,
+    'User-Agent': 'ChatGPT/1.2026.195 (Android 16; build 2619512)',
+    'oai-package-name': 'com.openai.chatgpt',
+    'oai-client-type': 'android',
+    'oai-device-id': uuid(),
+    'chatgpt-residency-region': 'no_constraint',
+    'x-device-tier': 'mid',
+  };
+};
+
+// base64 -> UTF-8 string without Buffer (Hermes-safe).
+const atobUnicode = (base64: string): string => {
+  const binary = globalThis.atob
+    ? globalThis.atob(base64)
+    : // minimal fallback (Hermes ships atob since RN 0.74; kept for safety)
+      base64;
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+};
+
+const accountGet = async (path: string, headers: Record<string, string>): Promise<unknown> =>
+  httpObject(CHATGPT_BASE + path, { headers });
+
+const discoverChatGPT = async (
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<{ models: AIChoice[]; chats: AIChoice[]; projects: AIProviderConfiguration['projects']; notice: string | null }> => {
+  const headers = chatGPTHeaders(secret);
+  const modelsValue = (await accountGet('models', headers)) as {
+    models?: { slug?: unknown; title?: unknown }[];
+  };
+  const models = ((modelsValue?.models as { slug?: unknown; title?: unknown }[]) ?? [])
+    .filter(row => typeof row?.slug === 'string')
+    .map(row => ({ id: row.slug as string, name: typeof row.title === 'string' ? row.title : (row.slug as string) }));
+  if (!models.some(row => row.id === 'auto')) {
+    models.unshift({ id: 'auto', name: 'اختيار الحساب التلقائي' });
+  }
+  const chats: AIChoice[] = [];
+  for (let offset = 0; offset < Math.min(50, 500); offset += 50) {
+    const list = (await accountGet(
+      `conversations?offset=${offset}&limit=50&order=updated&is_archived=false`,
+      headers,
+    )) as { items?: { id?: unknown; title?: unknown }[] };
+    const items = ((list?.items as { id?: unknown; title?: unknown }[]) ?? [])
+      .filter(row => typeof row?.id === 'string')
+      .map(row => ({
+        id: row.id as string,
+        name: typeof row.title === 'string' ? row.title : 'محادثة بلا عنوان',
+      }));
+    chats.push(...items);
+    if (items.length < 50) break;
+  }
+  let projects: AIProviderConfiguration['projects'] = [];
+  let notice: string | null = null;
+  try {
+    const value = (await accountGet(
+      'gizmos/snorlax/sidebar?owned_only=true&conversations_per_gizmo=100&limit=100',
+      headers,
+    )) as { items?: unknown[] };
+    projects = ((value?.items as Record<string, unknown>[]) ?? []).flatMap(item => {
+      const wrapper = (item?.gizmo as Record<string, unknown>) ?? {};
+      const gizmo = (wrapper.gizmo as Record<string, unknown>) ?? wrapper;
+      const id = gizmo?.id;
+      if (typeof id !== 'string') return [];
+      const display = (gizmo.display as Record<string, unknown>) ?? {};
+      const conversationItems =
+        ((item?.conversations as Record<string, unknown>)?.items as { id?: unknown; title?: unknown }[]) ?? [];
+      return [
+        {
+          id,
+          name: typeof display.name === 'string' ? display.name : 'مشروع',
+          chats: conversationItems
+            .filter(row => typeof row?.id === 'string')
+            .map(row => ({
+              id: row.id as string,
+              name: typeof row.title === 'string' ? row.title : 'محادثة بلا عنوان',
+            })),
+        },
+      ];
+    });
+  } catch (error) {
+    notice = `جُلبت النماذج والمحادثات؛ تعذر جلب المشاريع: ${(error as Error).message}`;
+  }
+  return { models, chats, projects, notice };
+};
+
+// ---- Gemini account (batchexecute web protocol) -----------------------------
+
+interface GeminiSession {
+  at: string;
+  sid: string;
+  build: string;
+  cookie: string;
+}
+
+// Captures "SNlM0e":"…"-style values from the Gemini app HTML.
+const captureValue = (text: string, pattern: string): string | null => {
+  const match = text.match(new RegExp(pattern));
+  if (!match) return null;
+  const found = match[0];
+  const idx = found.indexOf('":"');
+  if (idx === -1) return null;
+  return found.slice(idx + 3, -1);
+};
+
+const geminiSession = async (
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<GeminiSession> => {
+  if (!secret || secret.includes('\n') || secret.includes('\r')) {
+    throw new TranslationFailure('أدخل ترويسة Cookie لحساب Google من جلسة تخصك.');
+  }
+  const url = `https://gemini.google.com/u/${config.googleAccountIndex}/app`;
+  const response = await httpSend(url, {
+    headers: { Cookie: secret, 'User-Agent': 'Mozilla/5.0', Accept: 'text/html' },
+    accept: 'text/html',
+  });
+  validateStatus(response.status);
+  const at = captureValue(response.text, '"SNlM0e":"[^"]+"');
+  const sid = captureValue(response.text, '"FdrFJe":"[^"]+"');
+  if (!at || !sid) {
+    throw new TranslationFailure('لم تكتمل مصادقة Gemini. سجّل الدخول إلى موقعه وحدّث كوكيز الحساب.');
+  }
+  return { at, sid, build: captureValue(response.text, '"cfb2h":"[^"]+"') ?? '', cookie: secret };
+};
+
+const geminiRPC = async (
+  config: AIProviderConfiguration,
+  session: GeminiSession,
+  id: string,
+  payload: unknown,
+): Promise<unknown[]> => {
+  const url = new URL(
+    `https://gemini.google.com/u/${config.googleAccountIndex}/_/BardChatUi/data/batchexecute`,
+  );
+  url.searchParams.set('rpcids', id);
+  url.searchParams.set('source-path', `/u/${config.googleAccountIndex}/app`);
+  url.searchParams.set('f.sid', session.sid);
+  url.searchParams.set('bl', session.build);
+  url.searchParams.set('rt', 'c');
+  const form = `at=${encodeURIComponent(session.at)}&f.req=${encodeURIComponent(
+    JSON.stringify([[[id, JSON.stringify(payload), null, 'generic']]]),
+  )}`;
+  const response = await httpSend(url.toString(), {
+    method: 'POST',
+    body: form,
+    headers: {
+      Cookie: session.cookie,
+      Origin: 'https://gemini.google.com',
+      Referer: 'https://gemini.google.com/',
+      'X-Same-Domain': '1',
+    },
+    contentType: 'application/x-www-form-urlencoded;charset=utf-8',
+  });
+  validateStatus(response.status);
+  return parseGoogleRPC(response.text, id);
+};
+
+const discoverGeminiAccount = async (
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<{ models: AIChoice[]; chats: AIChoice[] }> => {
+  const session = await geminiSession(config, secret);
+  const status = await geminiRPC(config, session, 'otAQ7b', []);
+  const models: AIChoice[] = [];
+  const body = status[0];
+  if (body) {
+    const code = (nested(body, [14]) as number) ?? 1000;
+    if (code !== 1000) {
+      throw new TranslationFailure(`حساب Gemini غير جاهز (${code}). أكمل تسجيل الدخول وشروط الخدمة في موقعه.`);
+    }
+    const tiers = (nested(body, [16]) as number[]) ?? [];
+    const flags = (nested(body, [17]) as number[]) ?? [];
+    const field = tiers.includes(21) || tiers.includes(22) ? 13 : 12;
+    const capacity = tiers.includes(22)
+      ? 2
+      : tiers.includes(21)
+        ? 1
+        : flags.includes(115)
+          ? 4
+          : tiers.includes(16) || flags.includes(106)
+            ? 3
+            : tiers.includes(8) || flags.includes(19)
+              ? 2
+              : 1;
+    const rows = (nested(body, [15]) as unknown[][]) ?? [];
+    for (const row of rows) {
+      const id = row.length > 0 && typeof row[0] === 'string' ? row[0] : null;
+      if (!id) continue;
+      const name =
+        (nested(row, [11]) as string) ?? (nested(row, [19]) as string) ?? ((row[1] as string) ?? id);
+      const header: unknown[] = [1, null, null, null, id, null, null, 0, [4, 5, 6, 8], null, null];
+      while (header.length <= field) header.push(null);
+      header[field] = capacity;
+      header.push(null);
+      header.push(null);
+      header.push((nested(row, [17]) as number) ?? (nested(row, [9]) as number) ?? 1);
+      models.push({ id, name, metadata: JSON.stringify(header) });
+    }
+  }
+  const chats: AIChoice[] = [];
+  for (const pinned of [1, 0]) {
+    const values = await geminiRPC(config, session, 'MaZiqc', [
+      Math.min(50, 500),
+      null,
+      [pinned, null, 1],
+    ]);
+    for (const value of values) {
+      const rows = (nested(value, [2]) as unknown[][]) ?? [];
+      for (const row of rows) {
+        const id = row.length > 0 && typeof row[0] === 'string' ? row[0] : null;
+        const name = nested(row, [1]) as string | null;
+        if (id && name && !chats.some(chat => chat.id === id)) chats.push({ id, name });
+      }
+    }
+  }
+  return { models, chats };
+};
+
+const generateGeminiAccount = async (
+  prompt: string,
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<string> => {
+  const session = await geminiSession(config, secret);
+  const history: unknown[] = [null, null, null, null, null, null, null, null, null, null];
+  const content: unknown[] = [[prompt, 0, null, [], null, null, 0], ['ar'], history, null, null, null, [], 0, [], [], 1, 0];
+  const url = new URL(
+    `https://gemini.google.com/u/${config.googleAccountIndex}/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate`,
+  );
+  url.searchParams.set('bl', session.build);
+  url.searchParams.set('hl', 'ar');
+  url.searchParams.set('f.sid', session.sid);
+  url.searchParams.set('rt', 'c');
+  url.searchParams.set('_reqid', String(Math.floor(10000 + Math.random() * 90000)));
+  const headers: Record<string, string> = {
+    Cookie: session.cookie,
+    Origin: 'https://gemini.google.com',
+    Referer: 'https://gemini.google.com/',
+    'X-Same-Domain': '1',
+  };
+  const chosen = config.models.find(row => row.id === config.model);
+  if (chosen?.metadata) headers['x-goog-ext-525001261-jspb'] = chosen.metadata;
+  const response = await httpSend(url.toString(), {
+    method: 'POST',
+    body: `at=${encodeURIComponent(session.at)}&f.req=${encodeURIComponent(JSON.stringify([null, JSON.stringify(content)]))}`,
+    headers,
+    contentType: 'application/x-www-form-urlencoded;charset=utf-8',
+  });
+  validateStatus(response.status);
+  let result = '';
+  for (const line of response.text.split(/\r?\n/)) {
+    try {
+      const outer = JSON.parse(line);
+      const innerText = nested(outer, [0, 2]);
+      if (typeof innerText !== 'string') continue;
+      const inner = JSON.parse(innerText);
+      const text = nested(inner, [4, 0, 1, 0]);
+      if (typeof text === 'string' && text.length > 0) result = text;
+    } catch {
+      // non-JSON line
+    }
+  }
+  if (!result) {
+    throw new TranslationFailure('لم يُرجع Gemini نصًا. أعد اختبار الاتصال؛ بروتوكول الويب قد يتغير.');
+  }
+  return result;
+};
+
+// ---- ChatGPT generation ------------------------------------------------------
+
+const generateChatGPTAccount = async (
+  prompt: string,
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<string> => {
+  const headers = chatGPTHeaders(secret);
+  const parent = uuid();
+  const message: Record<string, unknown> = {
+    id: uuid(),
+    author: { role: 'user' },
+    content: { content_type: 'text', parts: [prompt] },
+    status: 'finished_successfully',
+    recipient: 'all',
+    metadata: {},
+  };
+  const body: Record<string, unknown> = {
+    action: 'next',
+    messages: [message],
+    parent_message_id: parent,
+    model: config.model,
+    history_and_training_disabled: false,
+    force_use_sse: true,
+    stream: true,
+    websocket_request_id: uuid(),
+  };
+  if (config.conversationID) body.conversation_id = config.conversationID;
+  if (config.projectID) {
+    (message.metadata as Record<string, unknown>).gizmo_id = config.projectID;
+    body.conversation_mode = { kind: 'gizmo_interaction', gizmo_id: config.projectID };
+    body.conversation_origin = 'tpp';
+  }
+  const response = await httpSend(CHATGPT_BASE + 'conversation', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers,
+    accept: 'text/event-stream',
+  });
+  validateStatus(response.status);
+  let answer = '';
+  for (const line of response.text.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue;
+    const payload = line.slice(5).trim();
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(payload);
+    } catch {
+      continue;
+    }
+    if (event.error) {
+      throw new TranslationFailure('أعاد ChatGPT خطأ أثناء التوليد. تحقق من الجلسة وحد الاستخدام.');
+    }
+    const msg = event.message as Record<string, unknown> | undefined;
+    const author = msg?.author as Record<string, unknown> | undefined;
+    if (author?.role === 'assistant') {
+      const content = msg?.content as Record<string, unknown> | undefined;
+      const parts = Array.isArray(content?.parts) ? (content.parts as unknown[]) : [];
+      const text = parts.filter((p): p is string => typeof p === 'string').join('');
+      if (text) answer = text;
+    }
+  }
+  if (!answer) {
+    throw new TranslationFailure(
+      'لم يصل رد نصي من ChatGPT. ربما تغير بروتوكول الحساب أو انتهت الجلسة.',
+    );
+  }
+  return answer;
+};
+
+// ---- Public surface ----------------------------------------------------------
+
+export const discoverProvider = async (
+  input: AIProviderConfiguration,
+  secret: string,
+): Promise<AIProviderConfiguration> => {
+  const config: AIProviderConfiguration = { ...input, discoveryNotice: null };
+  switch (config.kind) {
+    case 'openAICompatible':
+      config.models = await discoverOpenAICompatible(config, secret);
+      break;
+    case 'geminiAPI':
+      config.models = await discoverGeminiAPI(secret);
+      break;
+    case 'chatGPTAccount': {
+      const found = await discoverChatGPT(config, secret);
+      config.models = found.models;
+      config.chats = found.chats;
+      config.projects = found.projects;
+      config.discoveryNotice = found.notice;
+      break;
+    }
+    case 'geminiAccount': {
+      const found = await discoverGeminiAccount(config, secret);
+      config.models = found.models;
+      config.chats = found.chats;
+      config.projects = []; // Gemini account does not expose ChatGPT-style Projects.
+      break;
+    }
+  }
+  if (config.models.length === 0) {
+    throw new TranslationFailure(
+      'اتصل الخادم لكنه لم يُرجع نماذج متاحة لهذا الحساب. لا توجد نماذج مُختلقة؛ تحقق من العنوان أو الجلسة.',
+    );
+  }
+  if (!config.models.some(row => row.id === config.model)) {
+    config.model = config.models[0].id;
+  }
+  config.lastChecked = new Date().toISOString();
+  return config;
+};
+
+export const generateWithProvider = async (
+  prompt: string,
+  config: AIProviderConfiguration,
+  secret: string,
+): Promise<string> => {
+  if (!config.model) {
+    throw new TranslationFailure('اختر نموذجًا بعد اختبار اتصال المزود في الإعدادات.');
+  }
+  switch (config.kind) {
+    case 'openAICompatible': {
+      const url = validateEndpoint(config.baseURL, 'chat/completions');
+      const value = (await httpObject(url.toString(), {
+        method: 'POST',
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+        }),
+        headers: bearer(secret),
+      })) as { choices?: { message?: { content?: unknown } }[] };
+      const text = value?.choices?.[0]?.message?.content;
+      if (typeof text !== 'string' || text.length === 0) {
+        throw new TranslationFailure('لم يُرجع المزود نصًا من chat/completions.');
+      }
+      return text;
+    }
+    case 'geminiAPI':
+      return generateGeminiAPI(prompt, config, secret);
+    case 'chatGPTAccount':
+      return generateChatGPTAccount(prompt, config, secret);
+    case 'geminiAccount':
+      return generateGeminiAccount(prompt, config, secret);
+    default:
+      throw new TranslationFailure('نوع مزود غير معروف.');
+  }
+};
+
+// Real generation test used by the settings screen (Zeus AIProviderEditor).
+export const TEST_CONNECTION_PROMPT = 'Reply with exactly OK.';
+
+export type { TransportResponse };
