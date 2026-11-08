@@ -2391,27 +2391,27 @@ export function buildWorShell({
 
   <!-- dock tabs -->
   <div class="wor-reader-dock__tabs" aria-label="أقسام أدوات القراءة">
-    <button class="wor-reader-dock__tab is-active" type="button" data-wor-tab="book" id="wor-reader-tab-book">
+    <button class="wor-reader-dock__tab is-active" type="button" data-wor-tab="book" id="wor-reader-tab-book" aria-label="الكتاب">
       <span class="wor-reader-dock__tab-icon" aria-hidden="true"><svg class="wor-reader-dock__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15.5a2.5 2.5 0 0 1-2.5 2.5H6.5A2.5 2.5 0 0 1 4 18.5v-13Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path><path d="M8 7.5h8M8 11h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg></span>
       <span class="wor-reader-dock__tab-label">الفصل</span>
     </button>
-    <button class="wor-reader-dock__tab" type="button" data-wor-tab="text" id="wor-reader-tab-text">
+    <button class="wor-reader-dock__tab" type="button" data-wor-tab="text" id="wor-reader-tab-text" aria-label="النص">
       <span class="wor-reader-dock__tab-icon" aria-hidden="true"><svg class="wor-reader-dock__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 6h14M12 6v13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path></svg></span>
       <span class="wor-reader-dock__tab-label">النص</span>
     </button>
-    <button class="wor-reader-dock__tab" type="button" data-wor-tab="font" id="wor-reader-tab-font">
+    <button class="wor-reader-dock__tab" type="button" data-wor-tab="font" id="wor-reader-tab-font" aria-label="الخط">
       <span class="wor-reader-dock__tab-icon" aria-hidden="true"><svg class="wor-reader-dock__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 13.5 10.5 5h3L18 13.5M8 10.5h8M9.5 19h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
       <span class="wor-reader-dock__tab-label">الخط</span>
     </button>
-    <button class="wor-reader-dock__tab" type="button" data-wor-tab="background" id="wor-reader-tab-background">
+    <button class="wor-reader-dock__tab" type="button" data-wor-tab="background" id="wor-reader-tab-background" aria-label="الخلفية والألوان">
       <span class="wor-reader-dock__tab-icon" aria-hidden="true"><svg class="wor-reader-dock__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"></rect><path d="M4 14.5 9 9l11 8.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path><circle cx="15.4" cy="8.6" r="1.5" fill="currentColor"></circle></svg></span>
       <span class="wor-reader-dock__tab-label">الخلفية</span>
     </button>
-    <button class="wor-reader-dock__tab" type="button" data-wor-tab="settings" id="wor-reader-tab-settings">
+    <button class="wor-reader-dock__tab" type="button" data-wor-tab="settings" id="wor-reader-tab-settings" aria-label="الإعدادات">
       <span class="wor-reader-dock__tab-icon" aria-hidden="true"><svg class="wor-reader-dock__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 7h9m3.5 0H19M5 12h3m3.5 0H19M5 17h9m3.5 0H19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path><circle cx="15.5" cy="7" r="1.7" fill="none" stroke="currentColor" stroke-width="1.7"></circle><circle cx="9.5" cy="12" r="1.7" fill="none" stroke="currentColor" stroke-width="1.7"></circle><circle cx="15.5" cy="17" r="1.7" fill="none" stroke="currentColor" stroke-width="1.7"></circle></svg></span>
       <span class="wor-reader-dock__tab-label">الإعدادات</span>
     </button>
-    <button class="wor-reader-dock__tab" type="button" data-wor-tab="color" id="wor-reader-tab-color">
+    <button class="wor-reader-dock__tab" type="button" data-wor-tab="color" id="wor-reader-tab-color" aria-label="التلوين">
       <span class="wor-reader-dock__tab-icon" aria-hidden="true"><svg class="wor-reader-dock__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3.2a8.8 8.8 0 1 0 0 17.6h1.6a2.1 2.1 0 0 0 0-4.2H12a1.7 1.7 0 0 1 0-3.4h5.8A3.2 3.2 0 0 0 21 10C21 6.2 16.9 3.2 12 3.2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path><circle cx="7.4" cy="10.6" r="1.25" fill="currentColor"></circle><circle cx="11.4" cy="7.2" r="1.25" fill="currentColor"></circle><circle cx="15.8" cy="9.4" r="1.25" fill="currentColor"></circle></svg></span>
       <span class="wor-reader-dock__tab-label">التلوين</span>
     </button>
