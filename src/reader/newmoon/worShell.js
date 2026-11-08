@@ -247,6 +247,62 @@ export const WOR_APP_CSS = `
   .wor-custom-marks input { min-block-size: 42px; padding: 8px 10px; border: 1px solid var(--wor-border); border-radius: 12px; background: var(--wor-surface-soft); color: var(--wor-text); font: inherit; font-size: .95rem; font-weight: 800; text-align: center; outline: none; }
   .wor-custom-marks input:focus { border-color: color-mix(in srgb, var(--wor-accent) 55%, var(--wor-border)); }
   .wor-custom-marks__arrow { color: var(--wor-muted); font-weight: 900; }
+
+  /* ==========================================================================
+     Zeus chapter translation (tr*) — pill + status/offer cards.
+     The layer is pointer-events:none so it can never block reading/scroll;
+     only the pill/cards themselves opt back in. z-index sits BELOW the shell's
+     sheets (chapters 1200 / search 1300 / toast 3000) but above the dock.
+     ========================================================================== */
+  .wor-tr-layer {
+    position: fixed; left: 0; right: 0;
+    top: calc(var(--wor-safe-top, 0px) + var(--wor-topbar-h, 0px) + 12px);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    z-index: 1100; pointer-events: none; font-family: var(--wor-ui-font);
+  }
+  .wor-tr-pill {
+    pointer-events: auto; -webkit-appearance: none; appearance: none; cursor: pointer;
+    max-width: 86vw; padding: 8px 16px; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--wor-accent) 45%, var(--wor-border));
+    background: var(--wor-surface-solid); color: var(--wor-accent);
+    font: inherit; font-family: var(--wor-ui-font); font-size: 14px; font-weight: 800;
+    box-shadow: var(--wor-shadow); transition: transform 90ms ease;
+  }
+  .wor-tr-pill:active { transform: scale(.97); }
+  .wor-tr-card {
+    pointer-events: auto; display: flex; align-items: center; gap: 8px;
+    max-width: min(92vw, 430px); padding: 9px 10px 9px 12px; border-radius: 16px;
+    border: 1px solid var(--wor-border); background: var(--wor-surface-solid);
+    color: var(--wor-text); box-shadow: var(--wor-shadow); font-size: 13px;
+  }
+  .wor-tr-card__body { display: grid; gap: 1px; min-width: 0; }
+  .wor-tr-card__body strong {
+    font-size: .84rem; font-weight: 900; color: var(--wor-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .wor-tr-card__body span { color: var(--wor-muted); font-size: .72rem; font-weight: 800; }
+  .wor-tr-card__body small {
+    color: var(--wor-warning); font-size: .7rem; font-weight: 700; max-width: 58vw;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .wor-tr-card--error .wor-tr-card__body small { color: var(--wor-danger); }
+  .wor-tr-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-inline-start: auto; }
+  .wor-tr-btn {
+    -webkit-appearance: none; appearance: none; cursor: pointer; min-height: 34px;
+    padding: 6px 14px; border-radius: 999px; font-family: var(--wor-ui-font);
+    border: 1px solid color-mix(in srgb, var(--wor-accent) 45%, var(--wor-border));
+    background: var(--wor-accent-soft); color: var(--wor-accent);
+    font-size: .76rem; font-weight: 900; transition: transform 90ms ease;
+  }
+  .wor-tr-btn:active { transform: scale(.97); }
+  .wor-tr-icon {
+    -webkit-appearance: none; appearance: none; cursor: pointer; flex: 0 0 auto;
+    inline-size: 34px; block-size: 34px; display: grid; place-items: center;
+    border-radius: 50%; border: 1px solid var(--wor-border); padding: 0;
+    background: transparent; color: var(--wor-muted); transition: transform 90ms ease;
+  }
+  .wor-tr-icon svg { width: 16px; height: 16px; }
+  .wor-tr-icon:active { transform: scale(.94); }
 `;
 
 // ---------------------------------------------------------------------------
@@ -1551,6 +1607,378 @@ function bridgeScript() {
     authorCard && authorCard.addEventListener('click', function () { send({ t: 'profile' }); });
   }
 
+  // ==================== Zeus chapter translation (tr*) ====================
+  // In-shell side of the Zeus translation engine. RN owns providers, the
+  // SQLite/memory cache and orchestration (ReaderTranslationCoordinator); the
+  // shell only registers paragraphs, collects them with viewport-priority
+  // tiers, applies/restores text safely and mirrors progress into the small
+  // card UI. HARD RULE: the WebView HTML is never rebuilt — every state change
+  // flows through __wor.receive / send().
+  var TR = {
+    enabled: false,        // trConfig.enabled → pill visible
+    target: '',            // target language (code or name) from RN
+    rtl: true,             // target is RTL → applied <p dir="rtl">
+    active: false,         // a translation round is running
+    savedLang: null,       // original <html lang>, saved once per page
+    serial: 0,             // stable-id serial (never reused)
+    origLimit: 4000        // originals Map cap (oldest evicted)
+  };
+  var trById = new Map();      // id → <p> (live elements only, pruned lazily)
+  var trElIds = new WeakMap(); // <p> → id (stable across re-collects)
+  var trOrig = new Map();      // id → original innerHTML (applied paragraphs)
+  var trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null };
+  var trObserver = null;
+  var TR_HAS_LETTER = /\\p{L}/u; // paragraph must contain at least one letter
+  var TR_RTL_CODES = ['ar', 'fa', 'ur', 'he', 'ps', 'yi'];
+  var TR_LANG_NAMES = {
+    ar: 'العربية', en: 'الإنجليزية', fr: 'الفرنسية', es: 'الإسبانية',
+    de: 'الألمانية', tr: 'التركية', it: 'الإيطالية', pt: 'البرتغالية',
+    ru: 'الروسية', fa: 'الفارسية', ur: 'الأردية', he: 'العبرية',
+    ps: 'البشتوية', yi: 'اليديشية', zh: 'الصينية', ja: 'اليابانية',
+    ko: 'الكورية', id: 'الإندونيسية', hi: 'الهندية', th: 'التايلاندية'
+  };
+
+  function trEl(id) { return document.getElementById(id); }
+  function trTargetName() {
+    var t = String(TR.target || '').trim();
+    if (!t) return 'العربية';
+    return TR_LANG_NAMES[String(t).toLowerCase().split(/[-_]/)[0]] || t;
+  }
+  function trIsRtlTarget() {
+    var t = String(TR.target || '').trim().toLowerCase().split(/[-_]/)[0];
+    if (t && TR_RTL_CODES.indexOf(t) !== -1) return true;
+    return !!TR.rtl;
+  }
+
+  // ---- registration -------------------------------------------------------
+  // Paragraphs are section.wor-chapter-sec[data-ch] > div > p (see sections.ts).
+  // Image paragraphs, empty text and letter-less text never get an id.
+  function trRegisterP(p, ch) {
+    var known = trElIds.get(p);
+    if (known) { trById.set(known, p); return known; }
+    if (p.classList.contains('wor-image-p')) return null;
+    var text = String(p.textContent || '');
+    if (!text.trim() || !TR_HAS_LETTER.test(text)) return null;
+    var id = 'tr' + ch + ':' + (++TR.serial);
+    trElIds.set(p, id);
+    trById.set(id, p);
+    return id;
+  }
+  // Exact direct structure: the paragraph wrapper is a direct <div> child of
+  // the section (title/sep/copyright blocks are siblings, never nested).
+  function trSectionParagraphs(sec) {
+    var out = [];
+    for (var i = 0; i < sec.children.length; i++) {
+      var div = sec.children[i];
+      if (div.tagName !== 'DIV') continue;
+      for (var j = 0; j < div.children.length; j++) {
+        if (div.children[j].tagName === 'P') out.push(div.children[j]);
+      }
+    }
+    return out;
+  }
+  // Drop registrations whose element left the DOM (stashed by the windowing
+  // window or removed). Elements restored from the stash re-register under
+  // fresh ids; RN's memory cache answers them from its store without network.
+  function trPruneIds() {
+    trById.forEach(function (el, id) { if (!el.isConnected) trById.delete(id); });
+  }
+
+  // ---- tiers --------------------------------------------------------------
+  function trViewport() {
+    var vv = window.visualViewport;
+    var vh = (vv && vv.height) || window.innerHeight || document.documentElement.clientHeight || 600;
+    var vt = window.scrollY || window.pageYOffset || 0;
+    if (vv) vt = vv.pageTop != null ? vv.pageTop : vt + (vv.offsetTop || 0);
+    return { top: vt, height: vh };
+  }
+  // Zeus formula: 0 = intersects the viewport, 1 = within 2 viewport heights,
+  // 2 = far. Distance is measured past the viewport edges, never negative.
+  function trTierOf(rect, vt, vh) {
+    if (rect.bottom > vt && rect.top < vt + vh) return { tier: 0, distance: 0 };
+    var distance = Math.max(rect.top - (vt + vh), vt - rect.bottom, 0);
+    return { tier: distance < vh * 2 ? 1 : 2, distance: distance };
+  }
+
+  // ---- collection ---------------------------------------------------------
+  // Gather live, never-translated candidates with their tier/distance.
+  function trCandidates() {
+    var surface = $('#worTextSurface');
+    if (!surface) return [];
+    var secs = $all('section.wor-chapter-sec[data-ch]', surface);
+    var vp = trViewport();
+    var out = [];
+    for (var i = 0; i < secs.length; i++) {
+      var sec = secs[i];
+      if (sec.getAttribute('data-wor-unloaded')) continue; // stashed shell
+      var ch = parseInt(sec.getAttribute('data-ch'), 10) || 0;
+      var ps = trSectionParagraphs(sec);
+      for (var j = 0; j < ps.length; j++) {
+        var p = ps[j];
+        if (p.getAttribute('data-wor-tr')) continue; // already translated
+        var id = trRegisterP(p, ch);
+        if (!id) continue;
+        var t = trTierOf(p.getBoundingClientRect(), vp.top, vp.height);
+        out.push({
+          id: id,
+          text: String(p.textContent || ''),
+          sec: ch,
+          tier: t.tier,
+          distance: Math.round(t.distance)
+        });
+      }
+    }
+    return out;
+  }
+  // Build ONE batch. prioritize → only the lowest tier (Zeus: never mix tiers
+  // in a visible round), caps 24000 chars / 256 segments; background → mixed
+  // tiers by (tier, distance), caps 10000 / 64. A batch never spans two
+  // sections, so RN's chapter gate (expected) can trust the batch chapter.
+  function trCollectBatch(prioritize) {
+    trPruneIds();
+    var cands = trCandidates();
+    var empty = { chapter: 0, segments: [], tier: 2, more: false };
+    if (!cands.length) return empty;
+    cands.sort(function (a, b) { return a.tier - b.tier || a.distance - b.distance; });
+    var pool = prioritize
+      ? cands.filter(function (c) { return c.tier === cands[0].tier; })
+      : cands;
+    var maxChars = prioritize ? 24000 : 10000;
+    var maxSegs = prioritize ? 256 : 64;
+    var segments = [];
+    var chars = 0;
+    var firstSec = pool[0].sec;
+    for (var i = 0; i < pool.length; i++) {
+      var c = pool[i];
+      if (c.sec !== firstSec) break;
+      if (segments.length >= maxSegs || chars >= maxChars) break;
+      segments.push({
+        id: c.id,
+        text: c.text,
+        chapter: c.sec,
+        tier: c.tier,
+        distance: c.distance
+      });
+      chars += c.text.length;
+    }
+    if (!segments.length) return empty;
+    return {
+      chapter: firstSec,
+      segments: segments,
+      tier: segments[0].tier,
+      more: segments.length < cands.length
+    };
+  }
+  // Single code path shared by trStart / trCollect / debounced re-collections.
+  // force=true (explicit RN requests) always answers, even with an empty
+  // batch, so the coordinator never waits on a silent shell; internal
+  // debounces stay quiet when there is nothing new.
+  function collectAndPost(prioritize, force) {
+    if (!TR.active) return;
+    var res = trCollectBatch(prioritize !== false);
+    if (!res.segments.length && !force) return;
+    send({ t: 'trCollect', chapter: res.chapter, segments: res.segments, tier: res.tier, more: res.more });
+  }
+
+  // ---- apply / restore ----------------------------------------------------
+  function trEvictOrig() {
+    while (trOrig.size > TR.origLimit) {
+      var oldest = trOrig.keys().next();
+      if (!oldest || oldest.done) break;
+      trOrig.delete(oldest.value);
+    }
+  }
+  // Apply translated items. expected = chapter gate (the Zeus documentID
+  // equivalent): items whose section data-ch differs are skipped. Original
+  // markup is stashed once per paragraph in trOrig (module-level Map keyed by
+  // id); translated text goes in via textContent — NEVER innerHTML.
+  function trApplyItems(items, expected) {
+    var applied = 0;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      var el = trById.get(it.id);
+      if (!el || !el.isConnected) continue;
+      var sec = el.closest ? el.closest('section.wor-chapter-sec[data-ch]') : null;
+      if (!sec || (parseInt(sec.getAttribute('data-ch'), 10) || 0) !== expected) continue;
+      if (!el.getAttribute('data-wor-tr')) {
+        trOrig.set(it.id, el.innerHTML);
+        trEvictOrig();
+        el.setAttribute('data-wor-tr', '1');
+      }
+      el.textContent = it.text == null ? '' : String(it.text);
+      if (trIsRtlTarget()) el.setAttribute('dir', 'rtl');
+      applied++;
+    }
+    send({ t: 'trApplied', chapter: expected, applied: applied });
+  }
+  // Full restore: the saved originals are the app's own previously rendered
+  // markup, so putting them back via innerHTML is safe. Paragraphs whose
+  // element disappeared just drop their saved original.
+  function trRestoreAll() {
+    trOrig.forEach(function (html, id) {
+      var el = trById.get(id);
+      if (el && el.isConnected) {
+        el.innerHTML = html;
+        el.removeAttribute('dir');
+        el.removeAttribute('data-wor-tr');
+      }
+      trOrig.delete(id);
+    });
+    if (TR.savedLang !== null) {
+      document.documentElement.setAttribute('lang', TR.savedLang);
+      TR.savedLang = null;
+    }
+    TR.active = false;
+    trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null };
+    trRenderUI();
+    send({ t: 'trRestored' });
+  }
+
+  // ---- chapter change + detection ----------------------------------------
+  // Chapter swap: every old element is gone, so drop all registration state
+  // and stop any running round (RN decides whether to offer again).
+  function trResetForChapter() {
+    trById.clear();
+    trElIds = new WeakMap();
+    trOrig.clear();
+    TR.active = false;
+    TR.savedLang = null;
+    trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null };
+    trRenderUI();
+  }
+  // trDetect: ~3500 chars of the first live section + the <html lang> hint.
+  function trDetectNow() {
+    var sample = '';
+    var secs = $all('#worTextSurface section.wor-chapter-sec[data-ch]');
+    for (var i = 0; i < secs.length; i++) {
+      var sec = secs[i];
+      if (sec.getAttribute('data-wor-unloaded')) continue;
+      var ps = trSectionParagraphs(sec);
+      var buf = [];
+      for (var j = 0; j < ps.length; j++) {
+        buf.push(String(ps[j].textContent || ''));
+        if (buf.join('\\n').length >= 3500) break;
+      }
+      sample = buf.join('\\n').slice(0, 3500);
+      if (sample.trim()) break;
+    }
+    send({
+      t: 'trDetect',
+      lang: document.documentElement.getAttribute('lang') || '',
+      sample: sample
+    });
+  }
+  // Once per chapter render — debounced so re-render bursts send one sample.
+  var trDetectDebounced = debounce(trDetectNow, 500);
+  function trOnChapterChanged() {
+    trResetForChapter();
+    setTimeout(function () { trDetectDebounced(); }, 300);
+  }
+
+  // ---- auto re-collect (mutation + scroll) --------------------------------
+  // The shell stashes far sections (innerHTML='') in continuous mode; when a
+  // section re-renders, fresh elements appear → observer fires → new ids →
+  // RN's memory cache answers instantly. Intended behavior, not a loop.
+  var trDebouncedMutation = debounce(function () { if (TR.active) collectAndPost(true); }, 800);
+  var trDebouncedScroll = debounce(function () { if (TR.active) collectAndPost(true); }, 120);
+  function trEnsureObservers() {
+    if (trObserver) return;
+    var surface = $('#worTextSurface');
+    if (surface && window.MutationObserver) {
+      trObserver = new MutationObserver(trDebouncedMutation);
+      trObserver.observe(surface, { childList: true, subtree: true, characterData: true });
+    }
+    window.addEventListener('scroll', trDebouncedScroll, { passive: true });
+  }
+
+  // ---- card / pill UI -----------------------------------------------------
+  function trShowPill(show) {
+    var pill = trEl('worTrPill');
+    if (!pill) return;
+    pill.textContent = 'ترجمة إلى ' + trTargetName();
+    pill.hidden = !show;
+  }
+  // Pill shows only when the feature is on and no card is on screen.
+  function trRenderUI() {
+    var card = trEl('worTrStatus');
+    var offer = trEl('worTrOffer');
+    var st = trProgress.status;
+    var cardVisible = TR.enabled && st !== 'idle';
+    var offerVisible = !!(offer && !offer.hidden);
+    trShowPill(TR.enabled && !cardVisible && !offerVisible);
+    if (!card) return;
+    card.hidden = !cardVisible;
+    card.classList.toggle('wor-tr-card--error', st === 'error');
+    if (!cardVisible) return;
+    var title = trEl('worTrStatusText');
+    var meta = trEl('worTrStatusMeta');
+    var err = trEl('worTrStatusErr');
+    var acts = trEl('worTrStatusActions');
+    var text = 'جارٍ ترجمة الفصل…';
+    if (st === 'paused') text = 'تم إيقاف الترجمة مؤقتاً';
+    else if (st === 'error') text = 'تعذّرت الترجمة';
+    else if (st === 'completed') text = 'اكتملت الترجمة';
+    if (title) title.textContent = text;
+    var metaTxt = trProgress.total > 0 ? (trProgress.completed + ' / ' + trProgress.total) : '';
+    if (trProgress.reused > 0) metaTxt += (metaTxt ? ' · ' : '') + 'من الذاكرة: ' + trProgress.reused;
+    if (meta) meta.textContent = metaTxt;
+    if (err) {
+      var showErr = !!trProgress.error && (st === 'error' || st === 'paused');
+      err.textContent = showErr ? String(trProgress.error) : '';
+      err.hidden = !showErr;
+    }
+    if (acts) {
+      var btns = [];
+      if (st === 'running') btns.push(['pause', 'إيقاف']);
+      else if (st === 'paused' || st === 'error') btns.push(['resume', 'متابعة']);
+      else if (st === 'completed') {
+        btns.push(['restore', 'إظهار الأصل']);
+        btns.push(['retranslate', 'إعادة الترجمة']);
+      }
+      acts.innerHTML = btns.map(function (b) {
+        return '<button type="button" class="wor-tr-btn" data-wor-tr-action="' + b[0] + '">' + b[1] + '</button>';
+      }).join('');
+    }
+  }
+  function trSetProgress(msg) {
+    trProgress = {
+      status: msg.status || 'idle',
+      completed: parseInt(msg.completed, 10) || 0,
+      total: parseInt(msg.total, 10) || 0,
+      reused: parseInt(msg.reused, 10) || 0,
+      error: msg.error == null ? null : String(msg.error)
+    };
+    trRenderUI();
+  }
+  function trSetOffer(visible) {
+    var offer = trEl('worTrOffer');
+    if (offer) offer.hidden = !visible;
+    trRenderUI();
+  }
+  // Every card/pill interaction is forwarded to RN as a trButton event — the
+  // shell never starts/stops rounds on its own, RN posts back the commands.
+  function trBindUI() {
+    var pill = trEl('worTrPill');
+    pill && pill.addEventListener('click', function () { send({ t: 'trButton', action: 'start' }); });
+    var offer = trEl('worTrOffer');
+    offer && offer.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('[data-wor-tr-offer-start]')) send({ t: 'trButton', action: 'start' });
+      else if (e.target.closest && e.target.closest('[data-wor-tr-offer-dismiss]')) send({ t: 'trButton', action: 'dismissOffer' });
+    });
+    var card = trEl('worTrStatus');
+    card && card.addEventListener('click', function (e) {
+      var act = e.target.closest && e.target.closest('[data-wor-tr-action]');
+      if (act) { send({ t: 'trButton', action: act.getAttribute('data-wor-tr-action') }); return; }
+      if (e.target.closest && e.target.closest('[data-wor-tr-settings]')) send({ t: 'trButton', action: 'settings' });
+      else if (e.target.closest && e.target.closest('[data-wor-tr-dismiss]')) send({ t: 'trButton', action: 'dismiss' });
+    });
+  }
+  function trInit() {
+    trBindUI();
+    trEnsureObservers();
+    trRenderUI();
+  }
+
   // ============================ receive (RN -> web) ============================
   function receive(msg) {
     try {
@@ -1611,6 +2039,9 @@ function bridgeScript() {
         updateFavUI();
         renderChapters();
         renderSearch();
+        // Zeus translation: old paragraphs are gone — reset state and send a
+        // fresh trDetect sample once the new section settled into the DOM.
+        trOnChapterChanged();
       }
       else if (kind === 'appendChapter') {
         var surface2 = $('#worTextSurface');
@@ -1705,6 +2136,36 @@ function bridgeScript() {
         else if (drawer && drawer.classList.contains('is-open')) closeDrawer();
         else send({ t: 'exit' });
       }
+      // ---- Zeus chapter translation (tr*) ----
+      else if (kind === 'trConfig') {
+        TR.enabled = !!msg.enabled;
+        if (msg.target != null) TR.target = String(msg.target || '');
+        if (msg.rtl != null) TR.rtl = !!msg.rtl;
+        trRenderUI();
+      }
+      else if (kind === 'trStart') {
+        if (msg.target != null) TR.target = String(msg.target || '');
+        if (msg.rtl != null) TR.rtl = !!msg.rtl;
+        if (TR.savedLang === null) TR.savedLang = document.documentElement.getAttribute('lang') || '';
+        TR.active = true;
+        collectAndPost(true, true);
+      }
+      else if (kind === 'trCollect') {
+        // Next batch (scroll / continuation after a capped round).
+        collectAndPost(true, true);
+      }
+      else if (kind === 'trApply') {
+        trApplyItems(msg.items || [], parseInt(msg.expected, 10) || 0);
+      }
+      else if (kind === 'trRestore') {
+        trRestoreAll();
+      }
+      else if (kind === 'trProgress') {
+        trSetProgress(msg);
+      }
+      else if (kind === 'trOffer') {
+        trSetOffer(!!msg.visible);
+      }
       else if (kind === 'toast') toast(msg.text || '');
     } catch (e) {
       send({ t: 'error', message: String(e && e.message || e) });
@@ -1774,6 +2235,7 @@ function bridgeScript() {
   }
   function boot() {
     wire();
+    trInit(); // Zeus translation: card/pill wiring + re-collection observers
     preloadFonts();
     applySettingsUI();
     setDock(S.dockOpen !== false);
@@ -2526,6 +2988,33 @@ export function buildWorShell({
 </div>
 
 <!-- PORT EDIT: report modal removed (no report backend). -->
+
+<!-- Zeus chapter translation: pill + status/offer cards. The layer itself is
+     pointer-events:none (never blocks scroll); only the pill/cards opt in.
+     Everything is driven through the tr* bridge protocol — this static markup
+     is part of the mount-time HTML and is NEVER rebuilt. -->
+<div class="wor-tr-layer" id="worTrLayer">
+  <button class="wor-tr-pill" id="worTrPill" type="button" hidden>ترجمة إلى العربية</button>
+  <div class="wor-tr-card" id="worTrStatus" role="status" aria-live="polite" hidden>
+    <div class="wor-tr-card__body">
+      <strong id="worTrStatusText"></strong>
+      <span id="worTrStatusMeta"></span>
+      <small id="worTrStatusErr" hidden></small>
+    </div>
+    <div class="wor-tr-card__actions" id="worTrStatusActions"></div>
+    <button class="wor-tr-icon" type="button" data-wor-tr-settings aria-label="إعدادات الترجمة" title="إعدادات الترجمة">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </button>
+    <button class="wor-tr-icon" type="button" data-wor-tr-dismiss aria-label="إخفاء" title="إخفاء">×</button>
+  </div>
+  <div class="wor-tr-card wor-tr-card--offer" id="worTrOffer" hidden>
+    <div class="wor-tr-card__body">
+      <strong>ترجمة هذا الفصل؟</strong>
+    </div>
+    <button class="wor-tr-btn" type="button" data-wor-tr-offer-start>ترجمة</button>
+    <button class="wor-tr-icon" type="button" data-wor-tr-offer-dismiss aria-label="إخفاء" title="إخفاء">×</button>
+  </div>
+</div>
 
 <!-- toast -->
 <div class="wor-mini-toast" id="worMiniToast"><span></span></div>

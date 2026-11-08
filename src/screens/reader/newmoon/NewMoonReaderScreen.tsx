@@ -94,6 +94,10 @@ import {
   parseShellEvent,
   type WebViewHandle,
 } from './NewMoonBridge';
+import {
+  TranslationController,
+  type TranslationShellEvent,
+} from './translationController';
 import { getLegacyTtsPrefs } from './settingsMigration';
 import {
   buildWNumMap,
@@ -164,6 +168,12 @@ const NewMoonReaderScreen = ({
   // ---------------------------------------------------------------- refs ---
   const webViewRef = useRef<WebViewHandle | null>(null);
   const bridgeRef = useRef(new NewMoonBridge(webViewRef));
+  /** Zeus-translation controller — one per mount (created in an effect
+   *  below); talks to the shell only via the bridge, never the source. */
+  const translationCtlRef = useRef<TranslationController | null>(null);
+  /** worText per rendered section (wNum → text) — lets the translation
+   *  prefetcher reuse already-extracted lines without re-reading files. */
+  const sectionLinesRef = useRef<Map<number, string>>(new Map());
 
   // --------------------------------------------------------------- state ---
   /** One-time settings snapshot for render-phase reads (shell HTML, dock
@@ -412,6 +422,12 @@ const NewMoonReaderScreen = ({
           ? 0
           : loadScrollOffset(novel.id, chap.id);
         sendChapterToShell(chap, wNum, html, { scrollOffset });
+        // Translation bookkeeping for the new document section: re-arm the
+        // shell config + scope (bridge-only — the source string is frozen).
+        translationCtlRef.current?.onChapterChanged();
+        translationCtlRef.current?.setChapterScope(novel.id, chap.id, wNum);
+        sectionLinesRef.current.clear();
+        sectionLinesRef.current.set(wNum, worText);
         setLoading(false);
 
         if (!incognitoMode) {
@@ -637,8 +653,20 @@ const NewMoonReaderScreen = ({
         chap.name,
         rawHtml,
       );
-      const { html } = buildSection(chap, nextWNum, sanitized, 1);
+      const { html, worText } = buildSection(chap, nextWNum, sanitized, 1);
       appendedRef.current.push(nextWNum);
+      // Stash the plain text so the translation prefetcher can reuse it
+      // without a second file read (bounded — only recent sections kept).
+      sectionLinesRef.current.set(nextWNum, worText);
+      if (sectionLinesRef.current.size > 8) {
+        const oldest = sectionLinesRef.current.keys().next();
+        if (oldest.done !== true) {
+          sectionLinesRef.current.delete(oldest.value);
+        }
+      }
+      // Memory namespace parity for continuous sections:
+      // reader:{novelId}:{owningChapterId}#{section}.
+      translationCtlRef.current?.associateChapter(nextWNum, chap.id);
       // appendChapter never auto-scrolls — the reader keeps their position
       // (scrollToChapter is only sent for explicit next-nav, like the engine).
       bridgeRef.current.post({ kind: 'appendChapter', number: nextWNum, html });
@@ -772,6 +800,7 @@ const NewMoonReaderScreen = ({
           );
           const { html, worText } = buildSection(chap, wNum, sanitized, 0);
           ttsChunksRef.current = buildTtsChunks(worText);
+          sectionLinesRef.current.set(wNum, worText);
           sendChapterToShell(chap, wNum, html, {
             keepScroll: true,
           });
@@ -942,6 +971,94 @@ const NewMoonReaderScreen = ({
     navigation.goBack();
   }, [flushScrollSave, navigation]);
 
+  // -------------------------------------------------- translation (Zeus) ---
+  // One controller per mount: it owns prefs, the SQLite memory and the Zeus
+  // coordinator, and reaches the shell EXCLUSIVELY through the bridge queue
+  // — the frozen-document rules above are untouched.
+  const kickPrefetchRef = useRef<() => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    const ctl = new TranslationController();
+    ctl.setBridge(msg => {
+      bridgeRef.current.post(msg);
+    });
+    translationCtlRef.current = ctl;
+    return () => {
+      ctl.dispose();
+      if (translationCtlRef.current === ctl) {
+        translationCtlRef.current = null;
+      }
+    };
+    // bridgeRef is a stable ref; the controller lives for the whole mount.
+  }, []);
+
+  // Latest-closure re-binding (never during render — react-compiler rule).
+  useEffect(() => {
+    translationCtlRef.current?.setNavigation(routeName => {
+      // 'TranslationSettings' belongs to the translation settings feature;
+      // navigate defensively so an unbuilt route can never crash the reader.
+      (
+        navigation as unknown as { navigate: (name: string) => void }
+      ).navigate(routeName);
+    });
+    translationCtlRef.current?.setOnCompleted(() => {
+      if (
+        (translationCtlRef.current?.preferences.prefetchNextChapters ?? 0) > 0
+      ) {
+        void kickPrefetchRef.current();
+      }
+    });
+  });
+
+  useEffect(() => {
+    kickPrefetchRef.current = async () => {
+      const ctl = translationCtlRef.current;
+      if (!ctl) {
+        return;
+      }
+      const count = Math.min(
+        2,
+        Math.max(0, ctl.preferences.prefetchNextChapters),
+      );
+      if (count === 0) {
+        return;
+      }
+      const total = orderedRef.current.length;
+      for (let step = 1; step <= count; step += 1) {
+        const wNum = neighborWNum(currentWNumRef.current, step, total);
+        if (wNum === null) {
+          return;
+        }
+        const chap = wNumMapRef.current.get(wNum);
+        if (!chap) {
+          return;
+        }
+        let worText = sectionLinesRef.current.get(wNum);
+        if (worText === undefined) {
+          try {
+            const rawHtml = await loadChapterHtml(chap);
+            const sanitized = sanitizeChapterText(
+              novel.pluginId,
+              novel.name,
+              chap.name,
+              rawHtml,
+            );
+            worText = buildSection(chap, wNum, sanitized, 1).worText;
+          } catch {
+            // Prefetch is best-effort — a failed load just ends the chain.
+            return;
+          }
+        }
+        ctl.prefetchNext({
+          novelId: novel.id,
+          chapterId: chap.id,
+          wNum,
+          lines: worText.split('\n\n'),
+        });
+      }
+    };
+  });
+
   // ------------------------------------------------- shell → RN dispatch ---
   const handleShellEventRef = useRef<(event: Record<string, unknown>) => void>(
     () => {},
@@ -964,6 +1081,17 @@ const NewMoonReaderScreen = ({
           // post its own — never duplicate the fetch.
           if (!chapterSentRef.current && !loadingChapterRef.current) {
             rebuildCurrentRef.current();
+          }
+          // Translation: re-arm config + scope for the (possibly reloaded)
+          // document — bridge messages only, never a source change.
+          translationCtlRef.current?.onChapterChanged();
+          const readyChapter = wNumMapRef.current.get(currentWNumRef.current);
+          if (readyChapter) {
+            translationCtlRef.current?.setChapterScope(
+              novel.id,
+              readyChapter.id,
+              currentWNumRef.current,
+            );
           }
           break;
         }
@@ -1112,6 +1240,17 @@ const NewMoonReaderScreen = ({
         case 'error':
           // Shell-side exception surfaced to the user as a toast by the
           // engine itself; nothing to log in release builds.
+          break;
+        case 'trDetect':
+        case 'trCollect':
+        case 'trApplied':
+        case 'trRestored':
+        case 'trButton':
+        case 'trSettings':
+          // Translation feature — full handling lives in the controller.
+          translationCtlRef.current?.handleShellEvent(
+            event as TranslationShellEvent,
+          );
           break;
         default:
           break;
