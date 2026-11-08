@@ -252,8 +252,13 @@ final class LNReaderUITests: XCTestCase {
     shellDockToggle.tap()
     sleep(2)
     screenshot("07-engine-dock-open")
-    // Theme presets inside the engine panel — 'أسود' applies instantly
-    // through the live settings pipeline (no document reload).
+    // Switch to the engine's background/colors panel (dock tabs are
+    // icon-only; aria-labels give them accessible names) and tap the
+    // 'أسود' preset — it applies instantly through the live settings
+    // pipeline (no document reload).
+    tapWhenReady(["الخلفية والألوان"], 15, "engine colors panel tab missing")
+    sleep(1)
+    screenshot("07-engine-colors-panel")
     let blackPreset = app.buttons["أسود"].firstMatch
     if blackPreset.waitForExistence(timeout: 10) {
       blackPreset.tap()
