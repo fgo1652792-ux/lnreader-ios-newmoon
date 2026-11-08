@@ -8,6 +8,7 @@ import ReaderSettings from '../screens/settings/SettingsReaderScreen/SettingsRea
 import BackupSettings from '../screens/settings/SettingsBackupScreen';
 import AdvancedSettings from '../screens/settings/SettingsAdvancedScreen';
 import GeneralSettings from '../screens/settings/SettingsGeneralScreen/SettingsGeneralScreen';
+import TranslationSettings from '@screens/settings/SettingsTranslationScreen/SettingsTranslationScreen';
 import TaskQueue from '../screens/more/TaskQueueScreen';
 import Downloads from '../screens/more/DownloadsScreen';
 import AppearanceSettings from '../screens/settings/SettingsAppearanceScreen/SettingsAppearanceScreen';
@@ -78,6 +79,7 @@ const MoreStack = () => {
       <Stack.Screen name="Downloads" component={Downloads} />
       <Stack.Screen name="Categories" component={CategoriesScreen} />
       <Stack.Screen name="Statistics" component={StatsScreen} />
+      <Stack.Screen name="TranslationSettings" component={TranslationSettings} />
     </Stack.Navigator>
   );
 };
