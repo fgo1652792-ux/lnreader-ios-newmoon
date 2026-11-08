@@ -236,7 +236,14 @@ final class LNReaderUITests: XCTestCase {
 
     // 7) Theme tab -> THEME_CYCLE preset tap applies instantly (live
     // settings pipeline into the shell without reloading the document).
-    tapWhenReady(["السمة", "Theme"], 15, "Theme tab missing", scroll: true)
+    // The tabs live INSIDE the settings bottom sheet — open it via the FAB
+    // first. NO scroll here: swiping over the sheet would dismiss it
+    // (ax-tree-Theme-tab-missing.txt proved the closed-sheet state).
+    let settingsFab = element(withIdentifier: "fab")
+    waitExists(settingsFab, 15, "settings FAB missing")
+    settingsFab.tap()
+    sleep(2)
+    tapWhenReady(["السمة", "Theme"], 15, "Theme tab missing")
     sleep(1)
     tapWhenReady(["أسود", "Black"], 15, "black theme preset missing")
     sleep(2)
