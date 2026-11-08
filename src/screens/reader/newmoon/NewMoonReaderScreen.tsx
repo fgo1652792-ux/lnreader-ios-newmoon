@@ -47,10 +47,7 @@ import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import { useNavigation, type NavigationProp } from '@react-navigation/native';
-import type {
-  ChapterScreenProps,
-  RootStackParamList,
-} from '@navigators/types';
+import type { ChapterScreenProps, RootStackParamList } from '@navigators/types';
 
 import type { StringMap } from '@i18n/types';
 import { getString } from '@i18n/translations';
@@ -112,6 +109,23 @@ import {
   sortChaptersInReaderOrder,
   type WorReaderSettings,
 } from './NewMoonAdapter';
+import {
+  ChapterTranslationEngine,
+  chapterTranslationEngine,
+  type ChapterTranslationTarget,
+} from '@services/translation/chapterEngine';
+import {
+  buildChapterSegments,
+  languageSampleOf,
+  type ChapterSegments,
+} from '@services/translation/chapterSegments';
+import { effectivePrefs } from '@services/translation/prefs';
+import {
+  TranslationMemory,
+  memoryNamespace,
+} from '@services/translation/memory';
+import { isForeignText } from '@services/translation/detect';
+import { isRTLLanguage, keepsTranslations } from '@services/translation/types';
 
 const TTS_CHUNK_CHARS = 3000;
 
@@ -230,6 +244,8 @@ const NewMoonReaderScreen = ({
   }));
   const [, setIsFavorite] = useState(!!novel.inLibrary);
   const [chapterTitle, setChapterTitle] = useState(initialChapter.name);
+  /** Top-bar translate indicator (on = foreign chapter / active translation). */
+  const [transIndicator, setTransIndicator] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   /** Mirrors the engine's keepAwake switch → native wake lock. */
   const [keepAwake, setKeepAwake] = useState(
@@ -386,6 +402,15 @@ const NewMoonReaderScreen = ({
       setChapterTitle(chap.name);
       ttsChunksRef.current = [];
       stopTtsRef.current();
+      // Translation work belongs to the outgoing chapter — stop it and clear
+      // the visible card state (the shell clears its own maps on 'chapter').
+      chapterTranslationEngine.cancel();
+      transStateRef.current = {
+        mode: 'original',
+        hasDisplay: false,
+        cardVisible: false,
+      };
+      setTransIndicator(false);
 
       try {
         const rawHtml = await loadChapterHtml(chap);
@@ -413,6 +438,10 @@ const NewMoonReaderScreen = ({
           : loadScrollOffset(novel.id, chap.id);
         sendChapterToShell(chap, wNum, html, { scrollOffset });
         setLoading(false);
+
+        // Memory-first restore / offer / auto-translate — after the section
+        // DOM exists. Never blocks the chapter itself.
+        void attachTranslationRef.current(chap, wNum, worText);
 
         if (!incognitoMode) {
           insertHistory(chap.id).catch(() => {});
@@ -775,11 +804,376 @@ const NewMoonReaderScreen = ({
           sendChapterToShell(chap, wNum, html, {
             keepScroll: true,
           });
+          // Re-attach translation state (doc recovery / word rebuild):
+          // memory-first restore + interrupted-run snapshot, no new requests.
+          void attachTranslationRef.current(chap, wNum, worText);
         } catch {
           // keep the currently rendered chapter on rebuild failure
         }
       })();
     };
+  });
+
+  // ===================================================== translation ========
+  // Zeus engine integration: segments are extracted from the SAME worText
+  // that built the section HTML, so paragraph indices line up with the shell
+  // DOM 1:1. Every translation reaches the reader through the existing
+  // bridge as a `transApply` command — the WebView document is NEVER
+  // rebuilt, re-sourced or reloaded for translation (P0 rule).
+  type ReaderTransState = {
+    chapterId?: number;
+    wNum?: number;
+    segments?: ChapterSegments;
+    mode: 'original' | 'translated';
+    hasDisplay: boolean;
+    cardVisible: boolean;
+  };
+  const transStateRef = useRef<ReaderTransState>({
+    mode: 'original',
+    hasDisplay: false,
+    cardVisible: false,
+  });
+  const transProgressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transProgressRef = useRef<{
+    completed: number;
+    total: number;
+    running: boolean;
+    error?: string;
+  } | null>(null);
+  /** Second engine instance for background pre-translation of upcoming
+   *  chapters (memory-only — nothing reaches the screen). */
+  const preloadEngineRef = useRef<ChapterTranslationEngine | null>(null);
+  const preloadRunningRef = useRef<number | null>(null);
+
+  const sendTransState = useCallback(
+    (state: {
+      running?: boolean;
+      completed?: number;
+      total?: number;
+      error?: string | null;
+      visible?: boolean;
+      offer?: boolean;
+    }) => {
+      bridgeRef.current.post({ kind: 'transState', ...state });
+    },
+    [],
+  );
+
+  const flushTransProgress = useCallback(() => {
+    if (transProgressTimer.current) {
+      clearTimeout(transProgressTimer.current);
+      transProgressTimer.current = null;
+    }
+    const state = transProgressRef.current;
+    if (state) sendTransState(state);
+  }, [sendTransState]);
+
+  const startTranslation = useCallback(
+    async (chap?: ChapterInfo) => {
+      const st = transStateRef.current;
+      const target = chap
+        ? {
+            chap,
+            wNum: wNumMapRef.current.get(chap.id)
+              ? orderedRef.current.findIndex(c => c.id === chap.id) + 1
+              : currentWNumRef.current,
+          }
+        : null;
+      const wNum = target ? target.wNum : st.wNum ?? currentWNumRef.current;
+      const chapter = target?.chap ?? wNumMapRef.current.get(wNum);
+      const segments = st.segments;
+      if (!chapter || !segments || st.chapterId !== chapter.id) {
+        return;
+      }
+      const prefs = effectivePrefs(novel.id);
+      const engineTarget: ChapterTranslationTarget = {
+        novelId: novel.id,
+        chapterId: chapter.id,
+        pluginId: novel.pluginId,
+        novelName: novel.name,
+        chapterName: chapter.name,
+        wNum,
+        prepared: segments,
+      };
+      transStateRef.current = { ...st, hasDisplay: true, cardVisible: true };
+      setTransIndicator(true);
+      bridgeRef.current.post({
+        kind: 'transStart',
+        wNum,
+        rtl: isRTLLanguage(prefs.target),
+        lang: prefs.target,
+        langName: prefs.target === 'ar' ? 'العربية' : prefs.target,
+        total: segments.segments.length,
+      });
+      await chapterTranslationEngine.start(engineTarget, prefs, {
+        onApplied: rows => {
+          bridgeRef.current.post({
+            kind: 'transApply',
+            wNum,
+            items: rows,
+          });
+        },
+        onProgress: state => {
+          transProgressRef.current = state;
+          if (!transProgressTimer.current) {
+            transProgressTimer.current = setTimeout(() => {
+              transProgressTimer.current = null;
+              flushTransProgress();
+            }, 250);
+          }
+        },
+        onError: message => {
+          bridgeRef.current.post({
+            kind: 'toast',
+            text: getString('translation.failed', { message }),
+          });
+        },
+        onDone: () => {
+          void schedulePreload();
+        },
+      });
+      // engine.start resolves when the run finishes or is cancelled.
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [novel.id, novel.name, novel.pluginId, flushTransProgress],
+  );
+
+  /** Background pre-translation of the next N chapters (memory only). */
+  const schedulePreload = useCallback(async () => {
+    const prefs = effectivePrefs(novel.id);
+    const count = prefs.preloadNext ?? 0;
+    if (!count || preloadRunningRef.current != null) {
+      return;
+    }
+    const currentWNum = currentWNumRef.current;
+    for (let offset = 1; offset <= count; offset++) {
+      const nextWNum = currentWNum + offset;
+      if (nextWNum > orderedRef.current.length) return;
+      const chap = orderedRef.current[nextWNum - 1];
+      if (!chap) return;
+      preloadRunningRef.current = nextWNum;
+      try {
+        const rawHtml = await loadChapterHtml(chap);
+        const sanitized = sanitizeChapterText(
+          novel.pluginId,
+          novel.name,
+          chap.name,
+          rawHtml,
+        );
+        const worText = replaceTermsInText(
+          htmlToWorText(sanitized),
+          effectiveTerms(wordsStoreRef.current, novel.id),
+        );
+        const prepared = buildChapterSegments({ worText, title: chap.name });
+        const sample = languageSampleOf(prepared.segments);
+        if (!isForeignText(sample, prefs.target)) continue;
+        const engine = new ChapterTranslationEngine();
+        preloadEngineRef.current?.cancel();
+        preloadEngineRef.current = engine;
+        await engine.start(
+          {
+            novelId: novel.id,
+            chapterId: chap.id,
+            pluginId: novel.pluginId,
+            novelName: novel.name,
+            chapterName: chap.name,
+            wNum: nextWNum,
+            prepared,
+          },
+          prefs,
+          {},
+        );
+      } catch {
+        return; // source/network problem — stop the preload quietly
+      } finally {
+        preloadRunningRef.current = null;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novel.id, novel.name, novel.pluginId]);
+
+  /**
+   * Attaches translation intelligence to a freshly rendered chapter:
+   * memory-first restore (offline, no requests), then foreign-language
+   * offer / auto-start. Runs AFTER the shell has the section DOM.
+   */
+  const attachTranslation = useCallback(
+    async (chap: ChapterInfo, wNum: number, worText: string) => {
+      const st = transStateRef.current;
+      if (st.chapterId !== chap.id) {
+        chapterTranslationEngine.cancel();
+      }
+      const segments = buildChapterSegments({ worText, title: chap.name });
+      transStateRef.current = {
+        chapterId: chap.id,
+        wNum,
+        segments,
+        mode: 'original',
+        hasDisplay: false,
+        cardVisible: false,
+      };
+      const prefs = effectivePrefs(novel.id);
+      // 1) saved translation → restore instantly, zero network.
+      if (keepsTranslations(prefs)) {
+        const identity = `moonnovel:${novel.pluginId}:${novel.id}`;
+        const namespace = memoryNamespace(identity, prefs, null);
+        const saved = await TranslationMemory.lookup(
+          segments.segments,
+          namespace,
+        );
+        if (
+          saved.size > 0 &&
+          segments.segments.every(s => !s.text.trim() || saved.has(s.text))
+        ) {
+          bridgeRef.current.post({
+            kind: 'transApply',
+            wNum,
+            items: segments.segments
+              .filter(s => saved.has(s.text))
+              .map(s => ({ id: s.id, text: saved.get(s.text) as string })),
+          });
+          bridgeRef.current.post({ kind: 'transShow', mode: 'translated' });
+          transStateRef.current.mode = 'translated';
+          transStateRef.current.hasDisplay = true;
+          transStateRef.current.cardVisible = true;
+          setTransIndicator(true);
+          sendTransState({
+            running: false,
+            completed: segments.segments.length,
+            total: segments.segments.length,
+          });
+          void schedulePreload();
+          return;
+        }
+      }
+      // 1.5) engine still holds this chapter's results (interrupted run or
+      // document recovery) — re-apply without any request; resume if running.
+      if (
+        chapterTranslationEngine.currentChapterId === chap.id &&
+        chapterTranslationEngine.translatedCount > 0
+      ) {
+        bridgeRef.current.post({
+          kind: 'transApply',
+          wNum,
+          items: chapterTranslationEngine.snapshot(),
+        });
+        transStateRef.current.hasDisplay = true;
+        if (chapterTranslationEngine.isRunning) {
+          bridgeRef.current.post({
+            kind: 'transStart',
+            wNum,
+            rtl: isRTLLanguage(prefs.target),
+            lang: prefs.target,
+            langName: prefs.target === 'ar' ? 'العربية' : prefs.target,
+            total: segments.segments.length,
+          });
+          bridgeRef.current.post({ kind: 'transShow', mode: 'translated' });
+          transStateRef.current.mode = 'translated';
+          transStateRef.current.cardVisible = true;
+          sendTransState({
+            running: true,
+            completed: chapterTranslationEngine.translatedCount,
+            total: segments.segments.length,
+          });
+        }
+      }
+      // 2) foreign text → offer or auto-translate (Zeus prepare()).
+      const sample = languageSampleOf(segments.segments);
+      const foreign = isForeignText(sample, prefs.target);
+      if (!foreign) {
+        bridgeRef.current.post({ kind: 'transEnd' });
+        return;
+      }
+      if (prefs.automatic) {
+        void startTranslation(chap);
+      } else if (prefs.suggest) {
+        transStateRef.current.hasDisplay = true;
+        transStateRef.current.cardVisible = true;
+        sendTransState({
+          offer: true,
+          visible: true,
+          total: segments.segments.length,
+        });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      novel.id,
+      novel.name,
+      novel.pluginId,
+      startTranslation,
+      sendTransState,
+      schedulePreload,
+    ],
+  );
+
+  const handleTransAction = useCallback(
+    (action: string) => {
+      switch (action) {
+        case 'translate':
+          void startTranslation();
+          break;
+        case 'toggle': {
+          const next =
+            transStateRef.current.mode === 'translated'
+              ? 'original'
+              : 'translated';
+          transStateRef.current = { ...transStateRef.current, mode: next };
+          bridgeRef.current.post({ kind: 'transShow', mode: next });
+          break;
+        }
+        case 'stop':
+          chapterTranslationEngine.cancel();
+          flushTransProgress();
+          break;
+        case 'resume':
+          void chapterTranslationEngine.resume();
+          break;
+        case 'retry':
+          chapterTranslationEngine.reset();
+          void startTranslation();
+          break;
+        case 'settings':
+          navigation.navigate('MoreStack', {
+            screen: 'SettingsStack',
+            params: { screen: 'TranslationSettings' },
+          });
+          break;
+        case 'dismiss':
+          transStateRef.current = {
+            ...transStateRef.current,
+            cardVisible: false,
+          };
+          sendTransState({ visible: false });
+          break;
+        default:
+          break;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [startTranslation, flushTransProgress, navigation],
+  );
+
+  // Release translation work when the reader unmounts.
+  useEffect(
+    () => () => {
+      chapterTranslationEngine.cancel();
+      preloadEngineRef.current?.cancel();
+      if (transProgressTimer.current) {
+        clearTimeout(transProgressTimer.current);
+      }
+    },
+    [],
+  );
+
+  // Latest-closure indirection so earlier-defined callbacks (loadChapter,
+  // rebuildCurrent) can reach the translation attach step without a TDZ
+  // dependency-cycle in the render body.
+  const attachTranslationRef = useRef<
+    (chap: ChapterInfo, wNum: number, worText: string) => Promise<void>
+  >(async () => {});
+  useEffect(() => {
+    attachTranslationRef.current = attachTranslation;
   });
 
   // ----------------------------------------------------- chapters list ---
@@ -1109,6 +1503,15 @@ const NewMoonReaderScreen = ({
         case 'tool':
           // UI removed from the shell; handlers stay defensive no-ops.
           break;
+        case 'transAction':
+          handleTransAction(String(event.action ?? ''));
+          break;
+        case 'transVisible':
+          chapterTranslationEngine.setVisibleWindow(
+            Number(event.from ?? 0),
+            Number(event.to ?? 0),
+          );
+          break;
         case 'error':
           // Shell-side exception surfaced to the user as a toast by the
           // engine itself; nothing to log in release builds.
@@ -1126,7 +1529,10 @@ const NewMoonReaderScreen = ({
   // safeTop/safeBottom into S and applyTheme() rewrites --wor-safe-top/bottom
   // — a pure CSS-variable update with zero document reloads.
   useEffect(() => {
-    if (insets.top === mountInsets.top && insets.bottom === mountInsets.bottom) {
+    if (
+      insets.top === mountInsets.top &&
+      insets.bottom === mountInsets.bottom
+    ) {
       return;
     }
     bridgeRef.current.post({
@@ -1356,6 +1762,21 @@ const NewMoonReaderScreen = ({
             accessibilityLabel={getString(
               ttsPlaying ? 'newMoon.ttsStop' : 'newMoon.ttsPlay',
             )}
+          />
+          <IconButtonV2
+            name="translate"
+            size={22}
+            color={transIndicator ? theme.primary : shellTheme.foreground}
+            theme={theme}
+            padding={6}
+            onPress={() => {
+              if (transStateRef.current.mode === 'translated') {
+                handleTransAction('toggle');
+              } else {
+                handleTransAction('translate');
+              }
+            }}
+            accessibilityLabel={getString('translation.translateTitle')}
           />
         </View>
       ) : null}

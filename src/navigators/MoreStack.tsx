@@ -19,6 +19,7 @@ import LibrarySettings from '@screens/settings/SettingsLibraryScreen/SettingsLib
 import StatsScreen from '@screens/StatsScreen/StatsScreen';
 import GenreTaxonomyScreen from '@screens/settings/SettingsTaxonomyScreen/SettingsTaxonomyScreen';
 import StorageSettings from '@screens/settings/SettingsStorageScreen';
+import TranslationSettings from '@screens/settings/SettingsTranslationScreen/SettingsTranslationScreen';
 import ThemeCustomizer from '@screens/settings/SettingsAppearanceScreen/ThemeCustomizerScreen';
 import { MoreStackParamList, SettingsStackParamList } from './types';
 import { useTheme } from '@hooks/persisted';
@@ -51,11 +52,15 @@ const SettingsStack = () => {
         component={RespositorySettings}
       />
       <Stack.Screen name="LibrarySettings" component={LibrarySettings} />
-<Stack.Screen name="CustomCode" component={SettingsCustomCode} />
+      <Stack.Screen name="CustomCode" component={SettingsCustomCode} />
       <Stack.Screen name="CodeSnippets" component={CodeSnippetsScreen} />
       <Stack.Screen name="GenreTaxonomy" component={GenreTaxonomyScreen} />
       <Stack.Screen name="StorageSettings" component={StorageSettings} />
       <Stack.Screen name="ThemeCustomizer" component={ThemeCustomizer} />
+      <Stack.Screen
+        name="TranslationSettings"
+        component={TranslationSettings}
+      />
     </Stack.Navigator>
   );
 };

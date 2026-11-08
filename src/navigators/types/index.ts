@@ -88,6 +88,7 @@ export type SettingsStackParamList = {
   GenreTaxonomy: undefined;
   StorageSettings: undefined;
   ThemeCustomizer: undefined;
+  TranslationSettings: { novelId?: number } | undefined;
 };
 
 export type NovelScreenProps = NativeStackScreenProps<

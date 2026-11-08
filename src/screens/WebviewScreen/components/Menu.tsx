@@ -13,6 +13,8 @@ interface MenuProps {
   currentUrl: string;
   webView: RefObject<WebView<object> | null>;
   setMenuVisible: (value: boolean) => void;
+  onTranslate?: () => void;
+  onRestore?: () => void;
 }
 
 const Menu: React.FC<MenuProps> = ({
@@ -20,12 +22,36 @@ const Menu: React.FC<MenuProps> = ({
   currentUrl,
   webView,
   setMenuVisible,
+  onTranslate,
+  onRestore,
 }) => {
   const { top } = useSafeAreaInsets();
 
   return (
     <Pressable onPress={() => setMenuVisible(false)} style={styles.container}>
       <View style={[styles.menuContainer, { top }]}>
+        {onTranslate ? (
+          <Pressable
+            style={[styles.menuButton, { backgroundColor: theme.surface2 }]}
+            onPress={() => {
+              setMenuVisible(false);
+              onTranslate();
+            }}
+          >
+            <Text style={{ color: theme.onSurface }}>ترجمة الصفحة</Text>
+          </Pressable>
+        ) : null}
+        {onRestore ? (
+          <Pressable
+            style={[styles.menuButton, { backgroundColor: theme.surface2 }]}
+            onPress={() => {
+              setMenuVisible(false);
+              onRestore();
+            }}
+          >
+            <Text style={{ color: theme.onSurface }}>عرض النص الأصلي</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           style={[styles.menuButton, { backgroundColor: theme.surface2 }]}
           onPress={() => {

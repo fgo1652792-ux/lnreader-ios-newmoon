@@ -669,6 +669,9 @@ function bridgeScript() {
     if (!html) return 0;
     var mh = parseFloat(s.style.minHeight) || 0;
     s.innerHTML = html;
+    // Re-paint a translated section BEFORE measuring — translation swaps
+    // plain text for Arabic, which changes paragraph heights.
+    if (TRT.mode === 'translated') transPaintSection(num);
     s.style.minHeight = '';
     s.removeAttribute('data-wor-unloaded');
     delete chapterHtmlStash[num];
@@ -770,6 +773,8 @@ function bridgeScript() {
         window.__worNeedLock = true;
         send({ t: 'needNext' });
       }
+      // Translation engine: throttled visible-window reports (priority feed).
+      transReportVisible(false);
     });
   }
 
@@ -1551,6 +1556,239 @@ function bridgeScript() {
     authorCard && authorCard.addEventListener('click', function () { send({ t: 'profile' }); });
   }
 
+  // ===================== chapter translation (Zeus port) =====================
+  // Bridge-side half of the Moon novels translation engine (ported from
+  // Zeus-Ascent-Edition ReaderTranslation + Resources/translation.js).
+  //
+  // HARD RULES (the P0 reload bug must never come back):
+  //   • Translations are applied to EXISTING DOM nodes via textContent —
+  //     never innerHTML for translated text, never a document rebuild.
+  //   • Everything is plain data keyed "wNum:pIdx" (p0 = title). Sections
+  //     unloaded by the DOM windowing (enforceWindow) hold their translated
+  //     text inside the stash and get re-painted on restore.
+  //   • Original paragraph HTML is captured before the first overwrite and
+  //     restored verbatim on "show original".
+  var TRT = {
+    translations: {},   // "wNum:pIdx" -> translated text
+    originals: {},      // "wNum:pIdx" -> original innerHTML
+    painted: {},        // "wNum:pIdx" -> true while the translated text is on screen
+    mode: 'original',   // what the reader sees right now
+    rtl: true,
+    lang: 'ar',
+    active: false,      // a translation session is open for this document
+    reporting: false,   // RN asked for visible-window reports
+    offer: false,       // card shows the "translate?" offer
+    lastVisibleSent: 0
+  };
+
+  function transKey(wNum, idx) { return wNum + ':' + idx; }
+
+  function transReset() {
+    TRT.translations = {};
+    TRT.originals = {};
+    TRT.painted = {};
+    TRT.mode = 'original';
+    TRT.active = false;
+    TRT.offer = false;
+    transRenderCard();
+  }
+
+  function transSection(wNum) {
+    try { return document.querySelector('.wor-chapter-sec[data-ch="' + wNum + '"]'); } catch (e) { return null; }
+  }
+
+  function transNodeAt(wNum, idx) {
+    var sec = transSection(wNum);
+    if (!sec) return null;
+    if (idx === 0) {
+      // title block inside the section + the page header h1 (both show it)
+      var block = $('.wor-chapter-title-block', sec);
+      var header = $('#worChapterTitle');
+      return { block: block, header: header };
+    }
+    var paras = $all('p', sec);
+    return paras[idx - 1] || null;
+  }
+
+  /** Capture the original HTML once, before any overwrite. */
+  function transCaptureOriginal(wNum, idx, node) {
+    var key = transKey(wNum, idx);
+    if (TRT.originals[key] !== undefined) return;
+    if (idx === 0) {
+      TRT.originals[key] = JSON.stringify({
+        block: node.block ? node.block.innerHTML : null,
+        header: node.header ? node.header.innerHTML : null
+      });
+    } else {
+      TRT.originals[key] = node.innerHTML;
+    }
+  }
+
+  function transSetDirection(node, on) {
+    var targets = node && node.block ? [node.block, node.header] : [node];
+    targets.forEach(function (el) {
+      if (!el || el.setAttribute == null) return;
+      if (on) {
+        el.setAttribute('dir', TRT.rtl ? 'rtl' : 'ltr');
+        el.setAttribute('lang', TRT.lang);
+      } else {
+        el.removeAttribute('dir');
+        el.removeAttribute('lang');
+      }
+    });
+  }
+
+  function transPaintItem(wNum, idx, text) {
+    var node = transNodeAt(wNum, idx);
+    if (!node) return false; // section unloaded or not yet appended
+    var key = transKey(wNum, idx);
+    transCaptureOriginal(wNum, idx, node);
+    if (idx === 0) {
+      if (node.block) node.block.textContent = text;
+      if (node.header) node.header.textContent = text;
+    } else {
+      node.textContent = text; // plain-text insertion — no HTML from the model
+    }
+    transSetDirection(node, true);
+    TRT.painted[key] = true;
+    return true;
+  }
+
+  function transRestoreItem(wNum, idx) {
+    var key = transKey(wNum, idx);
+    var raw = TRT.originals[key];
+    if (raw === undefined) return;
+    var node = transNodeAt(wNum, idx);
+    if (!node) return;
+    if (idx === 0) {
+      try {
+        var pair = JSON.parse(raw);
+        if (node.block) node.block.innerHTML = pair.block || '';
+        if (node.header) node.header.innerHTML = pair.header || '';
+      } catch (e) { /* keep current content */ }
+    } else {
+      node.innerHTML = raw;
+    }
+    transSetDirection(node, false);
+    delete TRT.painted[key];
+  }
+
+  /** Apply translated text for one section according to the current mode. */
+  function transPaintSection(wNum) {
+    var apply = TRT.mode === 'translated';
+    for (var key in TRT.translations) {
+      if (Object.prototype.hasOwnProperty.call(TRT.translations, key)) {
+        var parts = key.split(':');
+        if (parseInt(parts[0], 10) !== wNum) continue;
+        var idx = parseInt(parts[1], 10);
+        if (apply) {
+          if (!TRT.painted[key]) transPaintItem(wNum, idx, TRT.translations[key]);
+        } else if (TRT.painted[key]) {
+          transRestoreItem(wNum, idx);
+        }
+      }
+    }
+  }
+
+  function transPaintAll() {
+    var nums = {};
+    Object.keys(TRT.translations).forEach(function (key) {
+      nums[key.split(':')[0]] = true;
+    });
+    Object.keys(nums).forEach(function (num) { transPaintSection(parseInt(num, 10)); });
+  }
+
+  // ------------------------------------------------------------- card --
+
+  function transCardEl() { return $('#worTransCard'); }
+
+  function transRenderCard() {
+    var card = transCardEl();
+    if (!card) return;
+    var s = TRT.card || {};
+    var visible = !!(TRT.offer || TRT.active || s.visible);
+    card.style.display = visible ? '' : 'none';
+    if (!visible) return;
+    var status = card.querySelector('[data-wor-trans-status]');
+    var rowMain = card.querySelector('[data-wor-trans-row-main]');
+    var rowOffer = card.querySelector('[data-wor-trans-row-offer]');
+    var stopBtn = card.querySelector('[data-wor-trans-action="stop"]');
+    var resumeBtn = card.querySelector('[data-wor-trans-action="resume"]');
+    var toggleBtn = card.querySelector('[data-wor-trans-action="toggle"]');
+    if (rowOffer) rowOffer.style.display = TRT.offer ? '' : 'none';
+    if (rowMain) rowMain.style.display = TRT.offer ? 'none' : '';
+    if (TRT.offer) {
+      if (status) status.textContent = 'هذا الفصل بلغة أخرى — ترجمته إلى ' + (TRT.langName || 'العربية') + '؟';
+      return;
+    }
+    var text;
+    if (s.error) text = 'خطأ في الترجمة: ' + s.error;
+    else if (s.running) text = 'جارٍ ترجمة الفصل… ' + (s.completed || 0) + '/' + (s.total || '?');
+    else if (TRT.mode === 'translated') text = 'اكتملت الترجمة (' + (s.completed || 0) + '/' + (s.total || '?') + ')';
+    else text = 'الترجمة محفوظة — معروض النص الأصلي';
+    if (status) status.textContent = text;
+    if (toggleBtn) toggleBtn.textContent = TRT.mode === 'translated' ? 'إظهار الأصل' : 'إظهار الترجمة';
+    if (stopBtn) stopBtn.style.display = s.running ? '' : 'none';
+    if (resumeBtn) resumeBtn.style.display = !s.running && TRT.mode !== 'translated' && !s.error ? '' : 'none';
+  }
+
+  function transBindCard() {
+    var card = transCardEl();
+    if (!card || card.__worTransBound) return;
+    card.__worTransBound = true;
+    card.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-wor-trans-action]') : null;
+      if (!btn) return;
+      e.preventDefault();
+      send({ t: 'transAction', action: btn.getAttribute('data-wor-trans-action') });
+    });
+  }
+
+  // ------------------------------------------------------ visibility --
+
+  /** Visible paragraph window of the active section (binary search on
+   *  offsetTop, then a short scan) — O(log n + visible), no full sweep. */
+  function transVisibleWindow() {
+    var y = window.scrollY || window.pageYOffset || 0;
+    var act = activeSectionAt(y);
+    var sec = transSection(act.num);
+    if (!sec) return null;
+    var top = sec.offsetTop;
+    var viewTop = y, viewBottom = y + window.innerHeight;
+    var idxFrom = -1, idxTo = -1;
+    var nodes = [];
+    var title = $('.wor-chapter-title-block', sec);
+    var paras = $all('p', sec);
+    if (title) nodes.push(title);
+    for (var i = 0; i < paras.length; i++) nodes.push(paras[i]);
+    // binary search first node whose bottom edge is below the viewport top
+    var lo = 0, hi = nodes.length - 1, first = nodes.length;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      var elTop = top + nodes[mid].offsetTop;
+      var elBottom = elTop + nodes[mid].offsetHeight;
+      if (elBottom >= viewTop) { first = mid; hi = mid - 1; } else { lo = mid + 1; }
+    }
+    for (var j = first; j < nodes.length; j++) {
+      var t = top + nodes[j].offsetTop;
+      if (t > viewBottom) break;
+      var idx = title ? (j === 0 ? 0 : j) : j + 1;
+      if (idxFrom === -1) idxFrom = idx;
+      idxTo = idx;
+    }
+    if (idxFrom === -1) return null;
+    return { wNum: act.num, from: idxFrom, to: idxTo };
+  }
+
+  function transReportVisible(force) {
+    if (!TRT.reporting) return;
+    var now = Date.now();
+    if (!force && now - TRT.lastVisibleSent < 600) return;
+    TRT.lastVisibleSent = now;
+    var win = transVisibleWindow();
+    if (win) send({ t: 'transVisible', wNum: win.wNum, from: win.from, to: win.to });
+  }
+
   // ============================ receive (RN -> web) ============================
   function receive(msg) {
     try {
@@ -1573,6 +1811,7 @@ function bridgeScript() {
         var surface = $('#worTextSurface');
         if (surface) surface.innerHTML = msg.html || '';
         resetChapterStash(); // full chapter swap — old stashed html is obsolete
+        transReset(); // translation state belongs to the replaced document
         invalidateSectionTops();
         var strong = $('.wor-reader-dock__progress-copy strong');
         var pct = $('.wor-reader-dock__progress-copy span');
@@ -1616,6 +1855,8 @@ function bridgeScript() {
         var surface2 = $('#worTextSurface');
         if (surface2) surface2.insertAdjacentHTML('beforeend', msg.html || '');
         invalidateSectionTops();
+        // re-paint a previously translated section re-entering the document
+        if (TRT.mode === 'translated') transPaintSection(parseInt(msg.number, 10));
         window.__worNeedLock = false;
         // newly appended chapters push the doc size up — trim the far tail
         if (S.continuousMode) enforceWindow(window.scrollY || 0);
@@ -1706,6 +1947,71 @@ function bridgeScript() {
         else send({ t: 'exit' });
       }
       else if (kind === 'toast') toast(msg.text || '');
+      // ===================== translation (Zeus port) =====================
+      else if (kind === 'transStart') {
+        TRT.rtl = msg.rtl !== false;
+        TRT.lang = msg.lang || 'ar';
+        TRT.langName = msg.langName || 'العربية';
+        TRT.active = true;
+        TRT.offer = false;
+        TRT.reporting = true;
+        TRT.card = { running: true, completed: 0, total: msg.total || 0, visible: true };
+        transRenderCard();
+        transReportVisible(true);
+      }
+      else if (kind === 'transApply') {
+        // items: [{ id: 'p<idx>', text }] for section msg.wNum
+        var twNum = parseInt(msg.wNum, 10);
+        var items = msg.items || [];
+        for (var ti = 0; ti < items.length; ti++) {
+          var item = items[ti];
+          if (!item || typeof item.id !== 'string' || typeof item.text !== 'string') continue;
+          var idx = parseInt(item.id.replace('p', ''), 10);
+          if (isNaN(idx)) continue;
+          TRT.translations[transKey(twNum, idx)] = item.text;
+        }
+        if (TRT.mode === 'translated') transPaintSection(twNum);
+        transReportVisible(true);
+      }
+      else if (kind === 'transShow') {
+        TRT.mode = msg.mode === 'translated' ? 'translated' : 'original';
+        if (TRT.mode === 'translated') TRT.active = true;
+        transPaintAll();
+        transRenderCard();
+        transReportVisible(true);
+      }
+      else if (kind === 'transState') {
+        TRT.card = {
+          running: !!msg.running,
+          completed: msg.completed || 0,
+          total: msg.total || 0,
+          error: msg.error || null,
+          visible: msg.visible !== false && (TRT.active || !!msg.running || TRT.mode === 'translated')
+        };
+        if (msg.offer) TRT.offer = true;
+        transRenderCard();
+      }
+      else if (kind === 'transVisibility') {
+        TRT.reporting = !!msg.enabled;
+        if (TRT.reporting) transReportVisible(true);
+      }
+      else if (kind === 'transEnd') {
+        TRT.active = false;
+        TRT.offer = false;
+        TRT.reporting = false;
+        if (TRT.mode !== 'translated') transRenderCard();
+      }
+      else if (kind === 'transForget') {
+        // Drop stored translations for one section (re-translate request).
+        var fNum = parseInt(msg.wNum, 10);
+        var fKeys = Object.keys(TRT.translations).concat(Object.keys(TRT.originals), Object.keys(TRT.painted));
+        fKeys.forEach(function (k) {
+          if (parseInt(k.split(':')[0], 10) === fNum) {
+            delete TRT.translations[k]; delete TRT.originals[k]; delete TRT.painted[k];
+          }
+        });
+        TRT.mode = 'original';
+      }
     } catch (e) {
       send({ t: 'error', message: String(e && e.message || e) });
     }
@@ -1776,6 +2082,8 @@ function bridgeScript() {
     wire();
     preloadFonts();
     applySettingsUI();
+    transBindCard();
+    transRenderCard();
     setDock(S.dockOpen !== false);
     // PORT EDIT: renderReportTypes() call removed with the report UI.
     // Local fonts settle asynchronously — a late swap reflows the document, so
@@ -1880,6 +2188,74 @@ export function buildWorShell({
      locally bundled TTF registered below (weights map onto variable fonts). */
   ${worFontFaces(fontsBase)}
 </style>
+<style>
+  /* ===================== translation card (Zeus port) ===================== */
+  .wor-trans-card {
+    position: fixed;
+    top: calc(var(--wor-safe-top, 0px) + 10px);
+    left: 14px;
+    right: 14px;
+    z-index: 60;
+    display: none;
+    pointer-events: auto;
+    background: var(--wor-surface, rgba(20, 20, 20, 0.92));
+    color: var(--wor-text, #fff);
+    border: 1px solid var(--wor-border, rgba(255, 255, 255, 0.15));
+    border-radius: 14px;
+    box-shadow: var(--wor-shadow, 0 10px 30px rgba(0, 0, 0, 0.35));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    padding: 10px 12px;
+  }
+  .wor-trans-card__row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .wor-trans-card__row + .wor-trans-card__row { margin-top: 8px; }
+  .wor-trans-card__row[data-wor-trans-row-offer]:not([style*="none"]) ~ .wor-trans-card__row[data-wor-trans-row-main] { display: none; }
+  .wor-trans-card__status {
+    flex: 1;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--wor-text, #fff);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .wor-trans-card__actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .wor-trans-card__btn {
+    appearance: none;
+    border: 1px solid var(--wor-border, rgba(255, 255, 255, 0.15));
+    background: transparent;
+    color: var(--wor-text, #fff);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 11px;
+    border-radius: 999px;
+    min-height: 32px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .wor-trans-card__btn--primary {
+    background: var(--wor-accent, #808080);
+    border-color: transparent;
+    color: var(--wor-bg, #000);
+  }
+  .wor-trans-card__btn--ghost { border-color: transparent; padding: 7px 8px; }
+  @media (max-width: 480px) {
+    .wor-trans-card__status { font-size: 12px; }
+    .wor-trans-card__btn { padding: 6px 9px; font-size: 11.5px; }
+  }
+</style>
 <style>${WOR_CSS}</style>
 <style>${WOR_APP_CSS}</style>
 </head>
@@ -1963,6 +2339,28 @@ export function buildWorShell({
   <span class="wor-reader-chapter-progress__track" aria-hidden="true">
     <span class="wor-reader-chapter-progress__fill" data-wor-reader-chapter-progress-fill style="width:0%"></span>
   </span>
+</div>
+
+<!-- translation card (Moon novels × Zeus engine) -->
+<div class="wor-trans-card" id="worTransCard" style="display:none" role="status" aria-live="polite">
+  <div class="wor-trans-card__row" data-wor-trans-row-offer>
+    <span class="wor-trans-card__status" data-wor-trans-status></span>
+    <span class="wor-trans-card__actions">
+      <button class="wor-trans-card__btn wor-trans-card__btn--primary" type="button" data-wor-trans-action="translate">ترجمة</button>
+      <button class="wor-trans-card__btn" type="button" data-wor-trans-action="dismiss">تجاهل</button>
+    </span>
+  </div>
+  <div class="wor-trans-card__row" data-wor-trans-row-main>
+    <span class="wor-trans-card__status" data-wor-trans-status></span>
+    <span class="wor-trans-card__actions">
+      <button class="wor-trans-card__btn wor-trans-card__btn--primary" type="button" data-wor-trans-action="toggle">إظهار الأصل</button>
+      <button class="wor-trans-card__btn" type="button" data-wor-trans-action="resume">متابعة</button>
+      <button class="wor-trans-card__btn" type="button" data-wor-trans-action="stop">إيقاف</button>
+      <button class="wor-trans-card__btn" type="button" data-wor-trans-action="retry">إعادة</button>
+      <button class="wor-trans-card__btn" type="button" data-wor-trans-action="settings">الإعدادات</button>
+      <button class="wor-trans-card__btn wor-trans-card__btn--ghost" type="button" data-wor-trans-action="dismiss" aria-label="إخفاء البطاقة">✕</button>
+    </span>
+  </div>
 </div>
 
 <!-- dock -->
