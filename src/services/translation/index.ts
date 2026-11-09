@@ -47,6 +47,38 @@ export {
   providerById,
 } from './prefs';
 export { detectLanguage, primarySubtag } from './detect';
+export {
+  AI_COLLECT_CAPS,
+  AI_MAX_PART_CHARS,
+  AI_MAX_PART_SEGMENTS,
+  AI_OUTPUT_TOKEN_BUDGET,
+  AI_PLAN_DEFAULTS,
+  clampMaxRequests,
+  describeAIPlan,
+  estimateTokens,
+  planAIParts,
+  type AIPlan,
+  type AIPlanLimits,
+} from './aiPolicy';
+export {
+  dailyLimitReached,
+  getUsage,
+  msUntilNextDay,
+  recordAIRequest,
+  recordAIRequestFailed,
+  resetUsage,
+  type TranslationUsageSnapshot,
+} from './usage';
+export {
+  isAlreadyTargetLanguage,
+  metadataIsRTL,
+  metadataPendingCount,
+  queueMetadata,
+  subscribeMetadata,
+  translatedMetadata,
+  type MetadataItem,
+  type MetadataKind,
+} from './metadata';
 export { ReaderTranslationCoordinator } from './coordinator';
 export type {
   CollectedSegment,

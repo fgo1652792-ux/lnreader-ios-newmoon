@@ -25,8 +25,10 @@ import { InteractionManager } from 'react-native';
 import {
   ReaderTranslationCoordinator,
   TranslationMemory,
+  autoEnabled,
   createSqliteMemoryDriver,
   detectLanguage,
+  isAIEngine,
   isRTLLanguage,
   keepsTranslations,
   loadPreferences,
@@ -38,6 +40,7 @@ import {
   savePreferences,
   secretKey,
   translateSegments,
+  AI_COLLECT_CAPS,
   type AIProviderConfiguration,
   type CollectedSegment,
   type CoordinatorApplyItem,
@@ -51,8 +54,14 @@ export type TranslationShellEvent = { t: string } & Record<string, unknown>;
 /** RN → shell translation commands. Type aliases (not interfaces) keep the
  *  union structurally assignable to the bridge's ShellCommand record type. */
 type TrCommand =
-  | { kind: 'trConfig'; enabled: boolean; target: string; rtl: boolean }
-  | { kind: 'trStart'; target: string }
+  | {
+      kind: 'trConfig';
+      enabled: boolean;
+      target: string;
+      rtl: boolean;
+      caps?: { maxCharacters: number; maxSegments: number };
+    }
+  | { kind: 'trStart'; target: string; caps?: { maxCharacters: number; maxSegments: number } }
   | { kind: 'trCollect' }
   | { kind: 'trApply'; items: CoordinatorApplyItem[]; expected: number }
   | { kind: 'trRestore' }
@@ -63,6 +72,7 @@ type TrCommand =
       total: number;
       reused: number;
       error: string | null;
+      requests: number;
     }
   | { kind: 'trOffer'; visible: boolean };
 
@@ -194,13 +204,22 @@ export class TranslationController {
   // ------------------------------------------------------ screen surface ---
 
   /** Current trConfig — re-sent on ready/every chapter so the shell can
-   *  update its translate button + RTL layout without a document reload. */
+   *  update its translate button + RTL layout without a document reload.
+   *  v3: engine-aware collect caps — AI rounds carry the whole chapter so
+   *  the coordinator's batch policy decides the real request split. */
   configForChapter(): void {
+    const caps = isAIEngine(this.prefs)
+      ? {
+          maxCharacters: AI_COLLECT_CAPS.maxCharacters,
+          maxSegments: AI_COLLECT_CAPS.maxSegments,
+        }
+      : undefined;
     this.post({
       kind: 'trConfig',
       enabled: true,
       target: this.prefs.target,
       rtl: isRTLLanguage(this.prefs.target),
+      caps,
     });
   }
 
@@ -250,6 +269,12 @@ export class TranslationController {
     this.configForChapter();
   }
 
+  /** Re-read stored preferences (screen focus after the settings screen) —
+   *  keeps the reader live without any WebView reload. */
+  refreshPrefs(): void {
+    this.updatePrefs(loadPreferences());
+  }
+
   /** Begin a translation run for the current scope (shell starts collecting). */
   start(): void {
     if (this.coordinator.status === 'running') {
@@ -270,7 +295,16 @@ export class TranslationController {
       novelId: this.scope.novelId,
       chapterId: this.scope.chapterId,
     });
-    this.post({ kind: 'trStart', target: this.prefs.target });
+    this.post({
+      kind: 'trStart',
+      target: this.prefs.target,
+      caps: isAIEngine(this.prefs)
+        ? {
+            maxCharacters: AI_COLLECT_CAPS.maxCharacters,
+            maxSegments: AI_COLLECT_CAPS.maxSegments,
+          }
+        : undefined,
+    });
   }
 
   /** Queue one chapter for background pre-translation. Serialized internally
@@ -405,7 +439,7 @@ export class TranslationController {
     if (detected.length === 0 || detected === targetPrimary) {
       return;
     }
-    if (this.prefs.readerAutomatic) {
+    if (autoEnabled('reader', this.prefs)) {
       this.start();
       return;
     }
@@ -492,6 +526,7 @@ export class TranslationController {
       total: progress.total,
       reused: progress.reused,
       error: progress.error,
+      requests: progress.requests,
     });
     const becameCompleted =
       progress.status === 'completed' && this.lastStatus !== 'completed';
@@ -557,6 +592,7 @@ export class TranslationController {
           total: 0,
           reused: 0,
           error: null,
+          requests: 0,
         });
         break;
       case 'settings':

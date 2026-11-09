@@ -69,7 +69,8 @@ export const splitCloudflareText = (text: string, limit: number): string[] => {
 const units = (text: string, engine: TranslationPreferences['engine']): number =>
   engine === 'cloudflare' ? text.length : Array.from(text).length;
 
-const characterLimit = (prefs: TranslationPreferences): number => {
+const characterLimit = (prefs: TranslationPreferences, override?: number): number => {
+  if (override !== undefined && prefs.engine === 'ai') return override;
   if (prefs.engine === 'cloudflare') {
     return prefs.cloudflare?.model.includes('llama-3.3') === true ? 16_000 : 24_000;
   }
@@ -78,7 +79,8 @@ const characterLimit = (prefs: TranslationPreferences): number => {
   return 5_000;
 };
 
-const itemLimit = (prefs: TranslationPreferences): number => {
+const itemLimit = (prefs: TranslationPreferences, override?: number): number => {
+  if (override !== undefined && prefs.engine === 'ai') return override;
   if (usesAIBatches(prefs)) return 256;
   if (prefs.engine === 'googleWeb') return 96;
   return 32;
@@ -88,6 +90,14 @@ export interface TranslateBatchContext {
   prefs: TranslationPreferences;
   provider: AIProviderConfiguration | null;
   secret: string;
+  // v3 AI policy: the coordinator pre-splits chapters into LARGE parts and
+  // passes per-part ceilings so translateSegments never re-splits a part
+  // into extra paid requests. Guarded to engine 'ai' only.
+  limits?: { characterLimit?: number; itemLimit?: number };
+  // v3 streaming (openAI-compatible only): incremental completed items as
+  // the JSON array is being generated; applied + saved progressively.
+  stream?: boolean;
+  onPartial?: (item: TranslationSegment) => void;
 }
 
 // TextTranslationService.translate — flatten (per-engine split), pack into
@@ -124,8 +134,8 @@ export const translateSegments = async (
     });
   }
 
-  const limit = characterLimit(prefs);
-  const countLimit = itemLimit(prefs);
+  const limit = characterLimit(prefs, context.limits?.characterLimit);
+  const countLimit = itemLimit(prefs, context.limits?.itemLimit);
   const batches: TranslationSegment[][] = [];
   let batch: TranslationSegment[] = [];
   let size = 0;
@@ -240,6 +250,41 @@ const translateBatch = async (
         'Return ONLY a JSON array with exactly the same IDs and keys id,text, one translated text per input. ' +
         `No Markdown, commentary, HTML or omitted items. User translation style: ${provider.instruction}\n` +
         `INPUT_JSON:\n${payload}`;
+      const wantsStream = context.stream === true && provider.kind === 'openAICompatible';
+      if (wantsStream) {
+        // v3 instant translation: completed {id,text} objects are surfaced as
+        // the array streams in; the caller applies + saves them right away.
+        const partials: TranslationSegment[] = [];
+        const seen = new Set<string>();
+        const response = await generateWithProvider(prompt, provider, secret, {
+          stream: true,
+          onPartialItem: item => {
+            if (seen.has(item.id)) return;
+            seen.add(item.id);
+            partials.push(item);
+            context.onPartial?.(item);
+          },
+        });
+        try {
+          return validateAIResponse(response, segments);
+        } catch (error) {
+          // Stream fell short of a parseable full array: accept the streamed
+          // items ONLY if they cover the batch completely and validly —
+          // never present a partial translation as success.
+          const complete =
+            partials.length === segments.length &&
+            segments.every(segment => {
+              const row = partials.find(partial => partial.id === segment.id);
+              return row !== undefined && row.text.trim().length > 0;
+            });
+          if (complete) {
+            return segments.map(
+              segment => partials.find(partial => partial.id === segment.id)!,
+            );
+          }
+          throw error;
+        }
+      }
       const response = await generateWithProvider(prompt, provider, secret);
       return validateAIResponse(response, segments);
     }

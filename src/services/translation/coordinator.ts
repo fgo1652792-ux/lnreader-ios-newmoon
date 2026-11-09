@@ -8,6 +8,14 @@ import {
 import { TranslationMemory } from './memory';
 import { translateSegments } from './textService';
 import { providerById } from './prefs';
+import {
+  AI_COLLECT_CAPS,
+  AI_MAX_PART_CHARS,
+  AI_MAX_PART_SEGMENTS,
+  clampMaxRequests,
+  planAIParts,
+} from './aiPolicy';
+import { dailyLimitReached } from './usage';
 
 // Port of Zeus Ascent Edition: ZEUSNext/ReaderTranslation.swift — the batch
 // loop, visible-priority tiers, session caps and guards, restructured as a
@@ -36,6 +44,9 @@ export interface CoordinatorProgress {
   total: number;
   reused: number;
   error: string | null;
+  // v3: real model requests spent during this run (AI engine). 0 for
+  // metered engines — the reader card hides the counter then.
+  requests: number;
 }
 
 export interface CoordinatorScope {
@@ -72,6 +83,10 @@ export class ReaderTranslationCoordinator {
   private pumping = false;
   private pending = false;
   private lastScope: CoordinatorScope = { novelId: '', chapterId: '' };
+  private requestsCount = 0;
+  // Set when the user resumes past the "chapter needs more requests than
+  // the ceiling" pause — explicit consent for the extra paid requests.
+  private ceilingApproved = false;
 
   constructor(
     private readonly prefs: TranslationPreferences,
@@ -94,6 +109,7 @@ export class ReaderTranslationCoordinator {
       total: this.total,
       reused: this.reused,
       error: this.errorValue,
+      requests: this.requestsCount,
     };
   }
 
@@ -198,8 +214,21 @@ export class ReaderTranslationCoordinator {
           return a.id < b.id ? -1 : 1;
         });
         const visible = this.queue[0].tier === 0;
-        const charLimit = visible ? VISIBLE_CHAR_LIMIT : BACKGROUND_CHAR_LIMIT;
-        const itemLimit = visible ? VISIBLE_ITEM_LIMIT : BACKGROUND_ITEM_LIMIT;
+        // v3 AI policy: background rounds take the WHOLE chapter (the shell
+        // raises its collect caps accordingly); the plan below decides the
+        // real request split. Visible rounds keep the Zeus quick caps so the
+        // first screen still lands fast. Cloudflare/Google never see this.
+        const aiWholeChapter = this.prefs.engine === 'ai';
+        const charLimit = visible
+          ? VISIBLE_CHAR_LIMIT
+          : aiWholeChapter
+            ? AI_COLLECT_CAPS.maxCharacters
+            : BACKGROUND_CHAR_LIMIT;
+        const itemLimit = visible
+          ? VISIBLE_ITEM_LIMIT
+          : aiWholeChapter
+            ? AI_COLLECT_CAPS.maxSegments
+            : BACKGROUND_ITEM_LIMIT;
         const batch: CollectedSegment[] = [];
         let size = 0;
         let cutIndex = 0;
@@ -233,34 +262,130 @@ export class ReaderTranslationCoordinator {
             (row, index, all) => all.findIndex(other => other.text === row.text) === index,
           );
         const freshResults = new Map<string, string>();
+        const applyItems = (items: CoordinatorApplyItem[]): void => {
+          if (items.length === 0) return;
+          this.deps.onApply(items);
+          for (const item of items) appliedIds.add(item.id);
+          this.completed += items.length;
+          this.emit();
+        };
+        const buildItems = (rows: CollectedSegment[], results: Map<string, string>) =>
+          rows.flatMap(row => {
+            if (appliedIds.has(row.id)) return []; // already applied (streaming/part)
+            const text = results.get(row.text);
+            return text === undefined ? [] : [{ id: row.id, text, chapter: row.chapter }];
+          });
         if (missing.length > 0) {
           this.processedCharacters += batch.reduce(
             (sum, row) => sum + Array.from(row.text).length,
             0,
           );
-          const translated = await this.deps.translate(
-            missing.map(row => ({ id: row.id, text: row.text })),
-            {
-              prefs: this.prefs,
-              provider: this.effectiveProvider(),
-              secret: await this.deps.getSecret(secretKeyFor(this.prefs, this.provider())),
-            },
-          );
-          if (ticket !== this.epoch) {
-            requeue();
-            return;
-          }
-          for (const item of translated) {
-            const source = missing.find(row => row.id === item.id);
-            if (source) freshResults.set(source.text, item.text);
-          }
-          if (keepsTranslations(this.prefs)) {
-            await this.deps.memory.save(ns, freshResults, {
-              novelId: this.lastScope.novelId,
-              chapterId: this.lastScope.chapterId,
-              engine: this.prefs.engine,
-              target: this.prefs.target,
+          const context = {
+            prefs: this.prefs,
+            provider: this.effectiveProvider(),
+            secret: await this.deps.getSecret(secretKeyFor(this.prefs, this.provider())),
+          };
+          if (aiWholeChapter) {
+            // ---- v3 AI policy: whole chapter, few large parts ------------
+            const plan = planAIParts(missing, {
+              maxRequestsPerChapter: clampMaxRequests(this.prefs.aiMaxRequestsPerChapter),
             });
+            if (plan.exceedsCeiling && !this.ceilingApproved) {
+              // Do NOT spend without consent: keep the batch, pause, ask.
+              requeue();
+              this.statusValue = 'paused';
+              this.errorValue =
+                plan.reason ?? 'يحتاج هذا الفصل طلبات أكثر من الحد المسموح.';
+              this.emit();
+              return;
+            }
+            const streamEnabled =
+              this.prefs.aiStreaming === true && context.provider?.kind === 'openAICompatible';
+            for (const [from, to] of plan.parts) {
+              if (ticket !== this.epoch) {
+                requeue();
+                return;
+              }
+              if (dailyLimitReached(this.prefs.aiDailyRequestLimit)) {
+                requeue();
+                this.statusValue = 'paused';
+                this.errorValue = `وصلتَ إلى الحد اليومي لطلبات الذكاء الاصطناعي (${this.prefs.aiDailyRequestLimit}). يمكن رفع الحد أو تعطيله من إعدادات الترجمة.`;
+                this.emit();
+                return;
+              }
+              const part = missing.slice(from, to);
+              const partResults = new Map<string, string>();
+              const translated = await this.deps.translate(
+                part.map(row => ({ id: row.id, text: row.text })),
+                {
+                  ...context,
+                  limits: {
+                    characterLimit: AI_MAX_PART_CHARS,
+                    itemLimit: AI_MAX_PART_SEGMENTS,
+                  },
+                  stream: streamEnabled,
+                  onPartial: streamEnabled
+                    ? item => {
+                        // Instant translation: apply + persist each item as
+                        // it arrives, before the request even finishes.
+                        if (ticket !== this.epoch) return;
+                        const source = part.find(row => row.id === item.id);
+                        if (!source || appliedIds.has(source.id)) return;
+                        partResults.set(source.text, item.text);
+                        applyItems(
+                          buildItems([source], partResults),
+                        );
+                      }
+                    : undefined,
+                },
+              );
+              this.requestsCount += 1;
+              if (ticket !== this.epoch) {
+                requeue();
+                return;
+              }
+              for (const item of translated) {
+                const source = part.find(row => row.id === item.id);
+                if (source) freshResults.set(source.text, item.text);
+              }
+              if (keepsTranslations(this.prefs)) {
+                const partSave = new Map<string, string>();
+                for (const item of translated) {
+                  const source = part.find(row => row.id === item.id);
+                  if (source) partSave.set(source.text, item.text);
+                }
+                await this.deps.memory.save(ns, partSave, {
+                  novelId: this.lastScope.novelId,
+                  chapterId: this.lastScope.chapterId,
+                  engine: this.prefs.engine,
+                  target: this.prefs.target,
+                });
+              }
+              // Apply THIS part before paying for the next one.
+              applyItems(buildItems(part, freshResults));
+              await (this.deps.yieldSlice?.() ?? new Promise<void>(resolve => setTimeout(resolve, 0)));
+            }
+          } else {
+            const translated = await this.deps.translate(
+              missing.map(row => ({ id: row.id, text: row.text })),
+              context,
+            );
+            if (ticket !== this.epoch) {
+              requeue();
+              return;
+            }
+            for (const item of translated) {
+              const source = missing.find(row => row.id === item.id);
+              if (source) freshResults.set(source.text, item.text);
+            }
+            if (keepsTranslations(this.prefs)) {
+              await this.deps.memory.save(ns, freshResults, {
+                novelId: this.lastScope.novelId,
+                chapterId: this.lastScope.chapterId,
+                engine: this.prefs.engine,
+                target: this.prefs.target,
+              });
+            }
           }
         }
         if (ticket !== this.epoch) {
@@ -268,16 +393,8 @@ export class ReaderTranslationCoordinator {
           return;
         }
         const results = new Map([...cached, ...freshResults]);
-        const items: CoordinatorApplyItem[] = batch.flatMap(row => {
-          const text = results.get(row.text);
-          return text === undefined ? [] : [{ id: row.id, text, chapter: row.chapter }];
-        });
-        if (items.length > 0) {
-          this.deps.onApply(items);
-          for (const item of items) appliedIds.add(item.id);
-        }
+        applyItems(buildItems(batch, results));
         inflight = [];
-        this.completed += items.length;
         this.emit();
         // Let the UI breathe between batches (Zeus Task.yield equivalent).
         await (this.deps.yieldSlice?.() ?? new Promise<void>(resolve => setTimeout(resolve, 0)));
@@ -324,6 +441,9 @@ export class ReaderTranslationCoordinator {
 
   resume(): void {
     if (this.statusValue !== 'paused') return;
+    // Resuming past the "needs more requests" pause = explicit approval to
+    // spend the additional requests for this run.
+    this.ceilingApproved = true;
     this.errorValue = null;
     this.statusValue = 'running';
     this.emit();
@@ -338,6 +458,8 @@ export class ReaderTranslationCoordinator {
     this.completed = 0;
     this.reused = 0;
     this.processedCharacters = 0;
+    this.requestsCount = 0;
+    this.ceilingApproved = false;
     this.statusValue = 'idle';
     this.errorValue = null;
     this.emit();

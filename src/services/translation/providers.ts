@@ -12,11 +12,14 @@ import {
   validateStatus,
   type TransportResponse,
 } from './transport';
+import { recordAIRequest, recordAIRequestFailed } from './usage';
 
 // Port of Zeus Ascent Edition: ZEUSNext/AIProviderService.swift.
 // Provider discovery + generation for four kinds. Private account protocols
 // (ChatGPT/Gemini web sessions) are best-effort ports of the Swift code and
 // may break when the upstream web app changes — same caveat as Zeus.
+// v3: streaming (openAI-compatible, XHR progress — no new native deps) and
+// factual usage metering (tokens ONLY when the provider reports them).
 
 const uuid = (): string =>
   'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -475,6 +478,165 @@ const generateChatGPTAccount = async (
 
 // ---- Public surface ----------------------------------------------------------
 
+export interface GenerateOptions {
+  // v3 instant translation: stream the OpenAI-compatible response and emit
+  // every completed {id,text} object as soon as it closes in the JSON array.
+  stream?: boolean;
+  onPartialItem?: (item: { id: string; text: string }) => void;
+}
+
+// Parse a growing SSE buffer; returns the trailing (incomplete) line.
+const consumeSSEBuffer = (
+  buffer: string,
+  onDelta: (delta: string) => void,
+): string => {
+  const lines = buffer.split('\n');
+  const rest = lines.pop() ?? '';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    if (payload.length === 0 || payload === '[DONE]') continue;
+    try {
+      const value = JSON.parse(payload);
+      const delta = value?.choices?.[0]?.delta?.content;
+      if (typeof delta === 'string' && delta.length > 0) onDelta(delta);
+    } catch {
+      // Malformed chunk: skip; final validation remains authoritative.
+    }
+  }
+  return rest;
+};
+
+// Scan `full` from `start` for complete top-level {"id":...,"text":...}
+// objects (brace-balanced, string-aware). Returns the index to resume from.
+const extractCompleteItems = (
+  full: string,
+  start: number,
+  emit: (item: { id: string; text: string }) => void,
+): number => {
+  let index = start;
+  while (index < full.length) {
+    const open = full.indexOf('{', index);
+    if (open === -1) return index;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let close = -1;
+    for (let cursor = open; cursor < full.length; cursor += 1) {
+      const character = full[cursor];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') inString = false;
+      } else if (character === '"') inString = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          close = cursor;
+          break;
+        }
+      }
+    }
+    if (close === -1) return open; // object still streaming
+    try {
+      const value = JSON.parse(full.slice(open, close + 1));
+      if (
+        value &&
+        typeof value.id === 'string' &&
+        typeof value.text === 'string' &&
+        value.text.length > 0
+      ) {
+        emit(value);
+      }
+    } catch {
+      // Incomplete/invalid JSON object: the final validation decides.
+    }
+    index = close + 1;
+  }
+  return index;
+};
+
+// Progressive POST over XMLHttpRequest — RN fetch cannot stream, XHR can.
+// JS-only: no native module, no new dependency, HTTPS unchanged.
+const xhrStreamPost = (
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  onChunk: (chunk: string) => void,
+): Promise<{ status: number; text: string }> =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.timeout = 120_000;
+    for (const [key, value] of Object.entries(headers)) {
+      try {
+        xhr.setRequestHeader(key, value);
+      } catch {
+        // Forbidden header: skip silently.
+      }
+    }
+    let consumed = 0;
+    xhr.onprogress = () => {
+      const total = xhr.responseText.length;
+      if (total > consumed) {
+        onChunk(xhr.responseText.slice(consumed));
+        consumed = total;
+      }
+    };
+    xhr.onload = () =>
+      resolve({ status: xhr.status, text: typeof xhr.response === 'string' ? xhr.response : '' });
+    xhr.onerror = () => reject(new TranslationFailure('تعذر الاتصال بالمزود (بث تدريجي).'));
+    xhr.ontimeout = () =>
+      reject(new TranslationFailure('انتهت مهلة البث التدريجي من المزود.'));
+    xhr.send(body);
+  });
+
+const generateStreamOpenAICompatible = async (
+  prompt: string,
+  config: AIProviderConfiguration,
+  secret: string,
+  options: GenerateOptions,
+): Promise<string> => {
+  const url = validateEndpoint(config.baseURL, 'chat/completions');
+  let full = '';
+  let buffer = '';
+  let scan = 0;
+  const flush = (chunk: string): void => {
+    buffer = consumeSSEBuffer(buffer + chunk, delta => {
+      full += delta;
+    });
+    scan = extractCompleteItems(full, scan, item => options.onPartialItem?.(item));
+  };
+  const result = await xhrStreamPost(
+    url.toString(),
+    { 'Content-Type': 'application/json', ...bearer(secret) },
+    JSON.stringify({
+      model: config.model,
+      messages: [{ role: 'user', content: prompt }],
+      stream: true,
+    }),
+    flush,
+  );
+  validateStatus(result.status);
+  // Fallback: server ignored stream:true and answered plain JSON.
+  if (full.length === 0) {
+    try {
+      const value = JSON.parse(result.text);
+      const text = value?.choices?.[0]?.message?.content;
+      if (typeof text === 'string') full = text;
+    } catch {
+      // Handled below.
+    }
+  }
+  if (full.length === 0) {
+    throw new TranslationFailure('لم يُرجع المزود نصًا من البث التدريجي.');
+  }
+  extractCompleteItems(full, scan, item => options.onPartialItem?.(item));
+  return full;
+};
+
 export const discoverProvider = async (
   input: AIProviderConfiguration,
   secret: string,
@@ -519,12 +681,33 @@ export const generateWithProvider = async (
   prompt: string,
   config: AIProviderConfiguration,
   secret: string,
+  options?: GenerateOptions,
 ): Promise<string> => {
   if (!config.model) {
     throw new TranslationFailure('اختر نموذجًا بعد اختبار اتصال المزود في الإعدادات.');
   }
+  try {
+    const text = await dispatchGenerate(prompt, config, secret, options);
+    return text;
+  } catch (error) {
+    recordAIRequestFailed();
+    throw error;
+  }
+};
+
+const dispatchGenerate = async (
+  prompt: string,
+  config: AIProviderConfiguration,
+  secret: string,
+  options?: GenerateOptions,
+): Promise<string> => {
   switch (config.kind) {
     case 'openAICompatible': {
+      if (options?.stream) {
+        const text = await generateStreamOpenAICompatible(prompt, config, secret, options);
+        recordAIRequest(prompt.length, text.length, null);
+        return text;
+      }
       const url = validateEndpoint(config.baseURL, 'chat/completions');
       const value = (await httpObject(url.toString(), {
         method: 'POST',
@@ -534,11 +717,18 @@ export const generateWithProvider = async (
           stream: false,
         }),
         headers: bearer(secret),
-      })) as { choices?: { message?: { content?: unknown } }[] };
+      })) as {
+        choices?: { message?: { content?: unknown } }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
       const text = value?.choices?.[0]?.message?.content;
       if (typeof text !== 'string' || text.length === 0) {
         throw new TranslationFailure('لم يُرجع المزود نصًا من chat/completions.');
       }
+      recordAIRequest(prompt.length, text.length, {
+        promptTokens: value?.usage?.prompt_tokens,
+        completionTokens: value?.usage?.completion_tokens,
+      });
       return text;
     }
     case 'geminiAPI':

@@ -29,6 +29,36 @@ const SCRIPT_LANGUAGES: [string, (code: number) => boolean][] = [
   ['el', c => c >= 0x0370 && c <= 0x03ff],
 ];
 
+// Latin-script refinement (Moon v3): Latin is shared by en/fr/es/de/tr/pt/it
+// and more, so raw script counting alone wrongly answers "en". Weight highly
+// distinctive letters/words unique to one language, then fall back to the
+// document/plugin hint when it is a Latin language and nothing contradicts it.
+const LATIN_MARKERS: [string, RegExp][] = [
+  ['es', /[ñ¿¡]/g],
+  ['de', /[ß]/g],
+  ['tr', /[şğİı]/g],
+  ['pt', /[ãõ]/g],
+  ['fr', /[çœàèêëîïôûù]/g],
+  ['it', /[àèìòù]/g],
+  ['vi', /[ăâđêôơư]/g],
+  ['pl', /[ąćęłńśźż]/g],
+  ['cs', /[ěščřžů]/g],
+];
+
+const LATIN_LANGUAGES = new Set([
+  'en', 'fr', 'es', 'de', 'tr', 'pt', 'it', 'id', 'vi', 'pl', 'cs',
+  'nl', 'sv', 'no', 'da', 'fi', 'hu', 'ro', 'cs', 'el', 'fil', 'ca',
+]);
+
+const latinMarkersOf = (sample: string): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const [language, pattern] of LATIN_MARKERS) {
+    const matches = sample.match(pattern);
+    if (matches && matches.length > 0) counts.set(language, matches.length);
+  }
+  return counts;
+};
+
 export const detectLanguage = (sampleRaw: string, hint?: string): string => {
   const sample = sampleRaw.slice(0, 3500);
   let letters = 0;
@@ -45,21 +75,51 @@ export const detectLanguage = (sampleRaw: string, hint?: string): string => {
     }
   }
   // Latin fallback bucket (en/fr/es/de/tr/pt/it/id all share the script).
-  const latin = letters - [...counts.values()].reduce((sum, value) => sum + value, 0);
+  const scriptCount = [...counts.values()].reduce((sum, value) => sum + value, 0);
+  const latin = letters - scriptCount;
+  const latinDominant = scriptCount === 0 && latin >= 25;
   if (letters < 25) {
     // Zeus fallback: prefer the document language hint, else empty.
     const primary = hint?.split('-')[0]?.toLowerCase() ?? '';
     return primary;
   }
+  if (latinDominant) {
+    // v3: resolve Latin-script languages instead of blanket-'en'.
+    const markers = latinMarkersOf(sample);
+    let markerBest = '';
+    let markerCount = 0;
+    for (const [language, count] of markers) {
+      if (count > markerCount) {
+        markerBest = language;
+        markerCount = count;
+      }
+    }
+    // Two or more distinctive letters is a confident non-English signal.
+    if (markerBest && markerCount >= 2) return markerBest;
+    // Strong English signal: common English words present, no markers.
+    if (markerCount === 0 && /\b(the|and|of|to|was|is)\b/i.test(sample)) return 'en';
+    // No contradiction and the hint is a Latin language -> trust the hint.
+    const hintPrimary = hint?.split('-')[0]?.toLowerCase() ?? '';
+    if (hintPrimary && hintPrimary !== 'en' && LATIN_LANGUAGES.has(hintPrimary)) {
+      const hintMarkers = markers.get(hintPrimary) ?? 0;
+      // Accept the hint unless another language's markers clearly dominate.
+      if (markerBest === '' || markerBest === hintPrimary || hintMarkers >= markerCount) {
+        return hintPrimary;
+      }
+      return markerBest;
+    }
+    if (markerBest && markerCount >= 1) return markerBest;
+    return 'en';
+  }
   let best = '';
-  let bestCount = 0;
+  let bestCount2 = 0;
   for (const [language, count] of counts) {
-    if (count > bestCount) {
+    if (count > bestCount2) {
       best = language;
-      bestCount = count;
+      bestCount2 = count;
     }
   }
-  if (bestCount === 0 && latin >= 25) return 'en';
+  if (bestCount2 === 0 && latin >= 25) return 'en';
   // Kana presence makes Japanese dominant over shared Han script.
   const kana = counts.get('ja') ?? 0;
   const han = counts.get('zh') ?? 0;
