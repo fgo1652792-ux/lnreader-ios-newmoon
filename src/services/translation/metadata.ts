@@ -364,6 +364,19 @@ const flush = async (): Promise<void> => {
   }
 };
 
+// Re-translate support (novel page button): drop every local outcome for the
+// text and queue it again. The memory cache still answers unless the memory
+// entry itself was cleared from the Data & Storage screen.
+export const forceMetadata = (item: MetadataItem): void => {
+  const text = item.text?.trim();
+  if (!text) return;
+  cache.delete(text);
+  settled.delete(text);
+  failedAt.delete(text);
+  queuedTexts.delete(text);
+  queueMetadata([{ ...item, text }]);
+};
+
 // RTL helper for components rendering an Arabic summary/title.
 export const metadataIsRTL = (text: string, target: string): boolean =>
   isRTLLanguage(target) || detectLanguage(text) === primarySubtag(target);

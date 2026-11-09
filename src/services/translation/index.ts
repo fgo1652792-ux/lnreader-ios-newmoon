@@ -70,6 +70,7 @@ export {
   type TranslationUsageSnapshot,
 } from './usage';
 export {
+  forceMetadata,
   isAlreadyTargetLanguage,
   metadataIsRTL,
   metadataPendingCount,
