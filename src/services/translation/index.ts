@@ -34,6 +34,7 @@ export {
 export type {
   MemoryDriver,
   MemoryEntry,
+  MemoryNovelStats,
   TranslationMemoryStats,
 } from './memory';
 export { createSqliteMemoryDriver } from './memorySqlite';
@@ -81,6 +82,12 @@ export {
   type MetadataKind,
 } from './metadata';
 export { ReaderTranslationCoordinator } from './coordinator';
+export {
+  ARABIC_QUERY_PATTERN,
+  isArabicPluginLang,
+  pluginSearchTarget,
+  translateSearchQuery,
+} from './query';
 export type {
   CollectedSegment,
   CoordinatorApplyItem,

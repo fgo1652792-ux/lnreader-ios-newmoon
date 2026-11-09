@@ -922,7 +922,16 @@ export interface StringMap {
   'storage.category.crashLogs': 'string';
   'storage.category.caches': 'string';
   'storage.category.databases': 'string';
+  'storage.category.translations': 'string';
   'storage.category.temp': 'string';
+  'translationsStorage.title': 'string';
+  'translationsStorage.entries': 'string';
+  'translationsStorage.size': 'string';
+  'translationsStorage.deleteTitle': 'string';
+  'translationsStorage.deleteMessage': 'string';
+  'translationsStorage.deleted': 'string';
+  'translationsStorage.empty': 'string';
+  'translationsStorage.note': 'string';
   'appearanceCustom.title': 'string';
   'appearanceCustom.entryDescription': 'string';
   'appearanceCustom.modeLight': 'string';
@@ -1080,4 +1089,6 @@ export interface StringMap {
   'translationScreen.retranslateSummary': 'string';
   'translationScreen.translatingSummary': 'string';
   'translationScreen.originalTitleLabel': 'string';
+  'translationScreen.searchTranslatedChip': 'string';
+  'translationScreen.searchTranslatedQuery': 'string';
 }

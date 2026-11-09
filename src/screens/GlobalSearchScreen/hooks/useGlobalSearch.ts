@@ -9,6 +9,11 @@ import {
 } from '@hooks/persisted';
 import { useFocusEffect } from '@react-navigation/native';
 import { resolveSharedUrl } from '@services/share/resolveSharedUrl';
+import {
+  ARABIC_QUERY_PATTERN,
+  pluginSearchTarget,
+  translateSearchQuery,
+} from '@services/translation';
 
 interface Props {
   defaultSearchText?: string;
@@ -20,6 +25,8 @@ export interface GlobalSearchResult {
   plugin: PluginItem;
   novels: NovelItem[];
   error?: string | null;
+  /** Query actually used for the extra (translated) results, if any. */
+  translatedQuery?: string;
 }
 
 export const useGlobalSearch = ({
@@ -87,6 +94,15 @@ export const useGlobalSearch = ({
               )
               .sort(novelResultSorter),
           );
+
+          // Arabic query + non-Arabic source: the source cannot know the
+          // original name, so ALSO search it with a translated query. The
+          // extra results are appended (never replace) and labeled with the
+          // query that produced them.
+          const target = pluginSearchTarget(_plugin.lang);
+          if (target && ARABIC_QUERY_PATTERN.test(searchText)) {
+            void searchInPluginTranslated(_plugin, target);
+          }
         } catch (error: any) {
           const errorMessage = error?.message || String(error);
           setSearchResults(prevState =>
@@ -103,6 +119,53 @@ export const useGlobalSearch = ({
               )
               .sort(novelResultSorter),
           );
+        }
+      }
+
+      async function searchInPluginTranslated(
+        _plugin: PluginItem,
+        target: string,
+      ) {
+        try {
+          const translatedQuery = await translateSearchQuery(
+            searchText,
+            target,
+          );
+          if (
+            !translatedQuery ||
+            translatedQuery === searchText ||
+            !isMounted.current ||
+            lastSearch.current !== searchText
+          ) {
+            return;
+          }
+          const plugin = getPlugin(_plugin.id);
+          if (!plugin) {
+            return;
+          }
+          const translatedRes = await plugin.searchNovels(translatedQuery, 1);
+          if (!isMounted.current || lastSearch.current !== searchText) {
+            return;
+          }
+          setSearchResults(prevState =>
+            prevState
+              .map(prevResult => {
+                if (prevResult.plugin.id !== _plugin.id) {
+                  return prevResult;
+                }
+                const merged = mergeNovelResults(
+                  prevResult.novels,
+                  translatedRes,
+                );
+                if (!merged) {
+                  return prevResult;
+                }
+                return { ...prevResult, novels: merged, translatedQuery };
+              })
+              .sort(novelResultSorter),
+          );
+        } catch {
+          // Translation or the extra search failed: original results stay.
         }
       }
 
@@ -203,4 +266,16 @@ function novelResultSorter(
   }
 
   return aName.localeCompare(bName);
+}
+
+// Translated-query results are additive: originals keep priority and paths
+// already found by the original query are dropped. Returns null when the
+// translated search produced nothing new (caller keeps its state untouched).
+function mergeNovelResults(
+  originals: NovelItem[],
+  translated: NovelItem[],
+): NovelItem[] | null {
+  const seen = new Set(originals.map(novel => novel.path));
+  const additions = translated.filter(novel => !seen.has(novel.path));
+  return additions.length > 0 ? [...originals, ...additions] : null;
 }

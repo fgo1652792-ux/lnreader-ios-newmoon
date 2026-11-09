@@ -55,8 +55,8 @@ const cache = new Map<string, string>(); // text -> translated (or same text)
 const settled = new Set<string>(); // texts resolved this session (any outcome)
 const failedAt = new Map<string, number>();
 const listeners = new Set<MetadataListener>();
-let queue: MetadataItem[] = [];
-let queuedTexts = new Set<string>();
+const queue: MetadataItem[] = [];
+const queuedTexts = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let firstQueuedAt = 0;
 let processing = false;
@@ -146,10 +146,19 @@ export const isAlreadyTargetLanguage = (text: string, target: string): boolean =
 // ---- namespace helpers -----------------------------------------------------
 
 const namespaceFor = (item: MetadataItem, prefs: ReturnType<typeof loadPreferences>) => {
+  // SHARED namespace per kind (v3): identical source texts translate
+  // identically, so one screen of titles aggregates into ONE provider
+  // request and a title cached from browse hits again on the details page
+  // for free. Per-novel deletion is still exact because the memory REF
+  // (novelId = meta:{pluginId}:{path}) is recorded per save call.
   const pageID =
     item.kind === 'genre'
       ? 'metadata:genres'
-      : `metadata:${item.pluginId}:${item.novelPath}`;
+      : item.kind === 'summary'
+        ? 'metadata:summaries'
+        : item.kind === 'chapterTitle'
+          ? 'metadata:chapterTitles'
+          : 'metadata:titles';
   const provider =
     prefs.engine === 'ai' ? providerById(loadProvidersSafe(), prefs.providerID) : null;
   return memoryIdentity(pageID, prefs, provider);

@@ -79,6 +79,7 @@ const BrowseMalScreen = ({ navigation }: BrowseMalScreenProps) => {
     <DiscoverNovelCard
       novel={item}
       theme={theme}
+      pluginId="myanimelist"
       onPress={() =>
         navigation.navigate('GlobalSearchScreen', {
           searchText: item.novelName,

@@ -7,7 +7,7 @@
 //  • explicit errors and real freed-bytes feedback — no fake success
 //  • personal data (library/progress/settings/cookies) is never deletable here
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RefreshControl,
   ScrollView,
@@ -24,6 +24,13 @@ import { getString } from '@i18n/translations';
 import { showToast } from '@utils/showToast';
 import { ThemeColors } from '@theme/types';
 import type { StringMap } from '@i18n/types';
+
+import {
+  TranslationMemory,
+  createSqliteMemoryDriver,
+  type MemoryNovelStats,
+} from '@services/translation';
+import { getNovelNamesByIds } from '@database/queries/NovelQueries';
 
 import {
   deleteNovelChapters,
@@ -63,8 +70,24 @@ export const CATEGORY_META: Record<
   crashLogs: { icon: 'bug-outline', color: t => t.error ?? t.outline },
   caches: { icon: 'cached', color: t => t.outlineVariant ?? t.outline },
   databases: { icon: 'database-outline', color: t => t.onSurfaceVariant },
+  translations: { icon: 'translate', color: t => t.primary },
   temp: { icon: 'folder-clock-outline', color: t => t.outline },
 };
+
+// --------------------------------------------------- saved translations ---
+type TranslationRow = MemoryNovelStats & { name: string };
+
+const META_REF_PREFIX = 'meta:';
+const MAX_TRANSLATION_ROWS = 50;
+
+/** `meta:{pluginId}:{novelPath}` identities render as-is without the prefix. */
+const translationRowName = (
+  novelId: string,
+  dbNames: Map<string, string>,
+): string =>
+  novelId.startsWith(META_REF_PREFIX)
+    ? novelId.slice(META_REF_PREFIX.length)
+    : dbNames.get(novelId) ?? novelId;
 
 const SettingsStorageScreen = () => {
   const navigation = useNavigation();
@@ -80,6 +103,12 @@ const SettingsStorageScreen = () => {
     useState<StorageCategory | null>(null);
   const [novelToDelete, setNovelToDelete] =
     useState<NovelStorageEntry | null>(null);
+
+  const [translationRows, setTranslationRows] = useState<TranslationRow[]>([]);
+  const [translationBusy, setTranslationBusy] = useState<string | null>(null);
+  const [translationToDelete, setTranslationToDelete] =
+    useState<TranslationRow | null>(null);
+  const memoryRef = useRef<TranslationMemory | null>(null);
 
   const measure = useCallback(async () => {
     setLoading(true);
@@ -105,6 +134,37 @@ const SettingsStorageScreen = () => {
   useEffect(() => {
     void measure();
   }, [measure]);
+
+  // Saved-translations breakdown: lazy TranslationMemory instance (same
+  // pattern as the translation settings screen), names resolved in one batch.
+  const refreshTranslations = useCallback(async () => {
+    const memory = memoryRef.current;
+    if (!memory) {
+      return;
+    }
+    try {
+      await memory.initialize();
+      const stats = await memory.statsByNovel();
+      const dbIds = stats
+        .map(row => Number(row.novelId))
+        .filter(id => Number.isInteger(id) && id > 0);
+      const pairs = await getNovelNamesByIds(dbIds).catch(() => []);
+      const dbNames = new Map(pairs.map(p => [String(p.id), p.name]));
+      setTranslationRows(
+        stats.map(row => ({
+          ...row,
+          name: translationRowName(row.novelId, dbNames),
+        })),
+      );
+    } catch {
+      setTranslationRows([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    memoryRef.current = new TranslationMemory(createSqliteMemoryDriver());
+    void refreshTranslations();
+  }, [refreshTranslations]);
 
   const rebuildable = useMemo(
     () => overview?.categories.filter(c => c.rebuildable) ?? [],
@@ -180,6 +240,30 @@ const SettingsStorageScreen = () => {
       void measure();
     }
   }, [measure, novelToDelete]);
+
+  const handleDeleteTranslation = useCallback(async () => {
+    if (!translationToDelete) {
+      return;
+    }
+    const target = translationToDelete;
+    setTranslationBusy(target.novelId);
+    setTranslationToDelete(null);
+    try {
+      await memoryRef.current?.removeNovel(target.novelId);
+      showToast(getString('translationsStorage.deleted'));
+    } catch (e) {
+      showToast(
+        getString('storage.deleteFailed', {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    } finally {
+      setTranslationBusy(null);
+      // Refresh BOTH views: the rows above and the 'translations' category.
+      void refreshTranslations();
+      void measure();
+    }
+  }, [measure, refreshTranslations, translationToDelete]);
 
   const renderCategory = (category: StorageCategory) => {
     const meta = CATEGORY_META[category.id];
@@ -333,6 +417,70 @@ const SettingsStorageScreen = () => {
         {/* Categories */}
         {overview?.categories.map(renderCategory)}
 
+        {/* Saved translations (translation memory) */}
+        <Text style={[styles.sectionTitle, { color: theme.onSurface }]}>
+          {getString('translationsStorage.title')}
+        </Text>
+        <View style={styles.novelsList}>
+          {translationRows.length ? (
+            translationRows.slice(0, MAX_TRANSLATION_ROWS).map(row => (
+              <View
+                key={row.novelId}
+                style={[
+                  styles.novelRow,
+                  {
+                    backgroundColor: theme.surfaceContainerLow ?? theme.surface,
+                  },
+                ]}
+              >
+                <View style={styles.novelText}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.novelTitle, { color: theme.onSurface }]}
+                  >
+                    {row.name}
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.onSurfaceVariant,
+                      fontSize: 12,
+                    }}
+                  >
+                    {getString('translationsStorage.entries', {
+                      count: row.count,
+                    })}
+                    {' · '}
+                    {getString('translationsStorage.size', {
+                      mb: (row.bytes / 1048576).toFixed(1),
+                    })}
+                  </Text>
+                </View>
+                <MaterialCommunityIcons
+                  name={
+                    translationBusy === row.novelId
+                      ? 'loading'
+                      : 'delete-outline'
+                  }
+                  size={22}
+                  color={theme.error ?? theme.onSurfaceVariant}
+                  onPress={() => setTranslationToDelete(row)}
+                  accessibilityRole="button"
+                  accessibilityLabel={getString(
+                    'translationsStorage.deleteTitle',
+                  )}
+                />
+              </View>
+            ))
+          ) : (
+            <Text style={{ color: theme.onSurfaceVariant, padding: 12 }}>
+              {getString('translationsStorage.empty')}
+            </Text>
+          )}
+        </View>
+        <Text style={[styles.orphanNote, { color: theme.onSurfaceVariant }]}>
+          {getString('translationsStorage.note')}
+        </Text>
+
         {/* Per-novel downloads */}
         <Text style={[styles.sectionTitle, { color: theme.onSurface }]}>
           {getString('storage.novelsSection')}
@@ -425,6 +573,22 @@ const SettingsStorageScreen = () => {
         confirmLabel={getString('storage.delete')}
         onConfirm={handleDeleteNovelChapters}
         onDismiss={() => setNovelToDelete(null)}
+      />
+
+      {/* Delete saved translations confirmation */}
+      <ConfirmationDialog
+        visible={!!translationToDelete}
+        title={getString('translationsStorage.deleteTitle')}
+        message={
+          translationToDelete
+            ? `${translationToDelete.name}\n\n${getString(
+                'translationsStorage.deleteMessage',
+              )}`
+            : ''
+        }
+        confirmLabel={getString('storage.delete')}
+        onConfirm={handleDeleteTranslation}
+        onDismiss={() => setTranslationToDelete(null)}
       />
     </SafeAreaView>
   );

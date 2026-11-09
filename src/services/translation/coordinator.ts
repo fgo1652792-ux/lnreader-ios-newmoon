@@ -315,6 +315,9 @@ export class ReaderTranslationCoordinator {
               }
               const part = missing.slice(from, to);
               const partResults = new Map<string, string>();
+              // Count the request when it STARTS — failed attempts were
+              // spent against the provider just like successful ones.
+              this.requestsCount += 1;
               const translated = await this.deps.translate(
                 part.map(row => ({ id: row.id, text: row.text })),
                 {
@@ -339,7 +342,6 @@ export class ReaderTranslationCoordinator {
                     : undefined,
                 },
               );
-              this.requestsCount += 1;
               if (ticket !== this.epoch) {
                 requeue();
                 return;

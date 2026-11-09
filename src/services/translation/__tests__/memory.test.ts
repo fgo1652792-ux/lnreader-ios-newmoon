@@ -130,6 +130,44 @@ describe('TranslationMemory huge-source skip', () => {
   });
 });
 
+describe('TranslationMemory statsByNovel', () => {
+  it('groups entry count and bytes per novel, largest bytes first', async () => {
+    const driver = new InMemoryMemoryDriver();
+    const memory = new TranslationMemory(driver);
+    const ref = (novelId: string) => ({
+      novelId,
+      chapterId: 'c1',
+      engine: 'googleWeb',
+      target: 'ar',
+    });
+
+    // n1: 266 + 276 bytes, n2: 261 bytes (utf8 length + 256 overhead).
+    await memory.save(IDENTITY, new Map([['ألف', 'x'.repeat(10)]]), ref('n1'));
+    await memory.save(IDENTITY, new Map([['باء', 'y'.repeat(20)]]), ref('n1'));
+    await memory.save(OTHER_IDENTITY, new Map([['جيم', 'z'.repeat(5)]]), ref('n2'));
+
+    expect(await memory.statsByNovel()).toEqual([
+      { novelId: 'n1', count: 2, bytes: 542 },
+      { novelId: 'n2', count: 1, bytes: 261 },
+    ]);
+  });
+
+  it('reflects removeNovel in the per-novel breakdown', async () => {
+    const driver = new InMemoryMemoryDriver();
+    const memory = new TranslationMemory(driver);
+    const ref = { novelId: 'n1', chapterId: 'c1', engine: 'googleWeb', target: 'ar' };
+
+    await memory.save(IDENTITY, new Map([['ألف', 'مترجم']]), ref);
+    await memory.save(IDENTITY, new Map([['دال', 'مترجم']]), { ...ref, novelId: 'n2' });
+
+    await memory.removeNovel('n1');
+
+    expect(await memory.statsByNovel()).toEqual([
+      { novelId: 'n2', count: 1, bytes: 10 + 256 },
+    ]);
+  });
+});
+
 describe('TranslationMemory scoped removal', () => {
   it('removeChapter removes only that chapter, leaving siblings and other novels', async () => {
     const driver = new InMemoryMemoryDriver();

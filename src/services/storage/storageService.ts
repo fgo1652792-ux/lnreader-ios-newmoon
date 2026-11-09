@@ -27,6 +27,11 @@ import {
   getDownloadedChapters,
 } from '@database/queries/ChapterQueries';
 import type { NovelInfo } from '@database/types';
+import {
+  TranslationMemory,
+  createSqliteMemoryDriver,
+  type TranslationMemoryStats,
+} from '@services/translation';
 
 // ------------------------------------------------------------- types ---
 export type StorageCategoryId =
@@ -37,6 +42,7 @@ export type StorageCategoryId =
   | 'webview'
   | 'crashLogs'
   | 'databases'
+  | 'translations'
   | 'temp'
   | 'caches';
 
@@ -99,11 +105,32 @@ const measureImageCache = async (): Promise<number> => {
   }
 };
 
+/**
+ * Logical size of the saved-translation memory (per-entry utf8 text + 256
+ * bytes overhead, exactly what the LRU eviction budget uses).
+ *
+ * NOT the on-disk size of translations.db on purpose: the native storage walk
+ * already maps `databases` to the whole Library directory and op-sqlite keeps
+ * translations.db inside it — adding the file size here would DOUBLE COUNT
+ * it under two categories. The logical sum is the number the memory's own
+ * eviction logic (24 MB cap) speaks, so it is the honest per-category figure.
+ */
+const measureTranslationsMemory = async (): Promise<TranslationMemoryStats> => {
+  try {
+    const memory = new TranslationMemory(createSqliteMemoryDriver());
+    await memory.initialize();
+    return await memory.stats();
+  } catch {
+    return { entries: 0, bytes: 0 };
+  }
+};
+
 // ------------------------------------------------------------ overview ---
 export const getStorageOverview = async (): Promise<StorageOverview> => {
   const info = await NativeFile.getStorageInfo();
   const imagesBytes = await measureImageCache();
   const cachesStats = catStats(info, 'caches');
+  const translationsStats = await measureTranslationsMemory();
 
   const categories: StorageCategory[] = [
     {
@@ -164,6 +191,16 @@ export const getStorageOverview = async (): Promise<StorageOverview> => {
       deletable: false,
       rebuildable: false,
       note: 'المكتبة والتقدم والإعدادات — لا تُحذف',
+    },
+    {
+      id: 'translations',
+      // Logical memory bytes — see measureTranslationsMemory() for why this
+      // deliberately is NOT translations.db's file size (already inside the
+      // Library-wide `databases` walk above).
+      bytes: translationsStats.bytes,
+      files: 0,
+      deletable: true,
+      rebuildable: true,
     },
     {
       id: 'temp',
@@ -250,6 +287,20 @@ export const deleteStorageCategory = async (
       freedBytes = result.deletedBytes;
       errors.push(...result.errors);
       await NativeFile.mkdir(PLUGIN_STORAGE).catch(() => {});
+      break;
+    }
+    case 'translations': {
+      // Translation memory ONLY — the translations cache is rebuildable by
+      // design (re-translated on demand); library DBs are never touched here.
+      try {
+        const memory = new TranslationMemory(createSqliteMemoryDriver());
+        await memory.initialize();
+        const before = await memory.stats();
+        await memory.clear();
+        freedBytes = before.bytes;
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message : String(e));
+      }
       break;
     }
     case 'downloads':

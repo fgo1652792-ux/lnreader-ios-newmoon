@@ -29,8 +29,8 @@ interface RefRow {
 // Interprets only the SQL statements TranslationMemory actually sends (see
 // memory.ts): schema no-ops, INSERT OR REPLACE, LRU touch updates, the
 // MAX(256, COUNT/4) eviction, scoped ref deletions, clears, the per-key
-// SELECT and the COUNT/SUM stats query. Maps are exposed so tests can
-// inspect rows and count disk queries directly.
+// SELECT, the COUNT/SUM stats query and the per-novel GROUP BY breakdown.
+// Maps are exposed so tests can inspect rows and count disk queries directly.
 export class InMemoryMemoryDriver implements MemoryDriver {
   readonly translations = new Map<string, TranslationRow>();
 
@@ -52,6 +52,19 @@ export class InMemoryMemoryDriver implements MemoryDriver {
       let bytes = 0;
       for (const row of this.translations.values()) bytes += row.bytes;
       return [{ entries: this.translations.size, bytes }] as unknown as T[];
+    }
+    if (sql.includes('FROM translation_refs') && sql.includes('GROUP BY r.novelId')) {
+      // Mirrors: SELECT novelId, COUNT(*), COALESCE(SUM(t.bytes),0) ... LEFT JOIN
+      const groups = new Map<string, { count: number; bytes: number }>();
+      for (const [key, ref] of this.refs.entries()) {
+        const group = groups.get(ref.novelId) ?? { count: 0, bytes: 0 };
+        group.count += 1;
+        group.bytes += this.translations.get(key)?.bytes ?? 0;
+        groups.set(ref.novelId, group);
+      }
+      return [...groups.entries()]
+        .map(([novelId, group]) => ({ novelId, ...group }))
+        .sort((a, b) => b.bytes - a.bytes) as unknown as T[];
     }
     return [];
   }

@@ -69,6 +69,15 @@ export interface TranslationMemoryStats {
   bytes: number;
 }
 
+// Moon novels UI: per-novel memory breakdown for the Data & Storage screen.
+// novelId is a DB Novel id (numeric string) or a `meta:{pluginId}:{novelPath}`
+// identity written by the v3 metadata layer.
+export interface MemoryNovelStats {
+  novelId: string;
+  count: number;
+  bytes: number;
+}
+
 export class TranslationMemory {
   private readonly driver: MemoryDriver;
   private readonly maximumBytes: number;
@@ -202,6 +211,26 @@ export class TranslationMemory {
       'SELECT COUNT(*) AS entries, COALESCE(SUM(bytes), 0) AS bytes FROM translations',
     );
     return { entries: Number(rows[0]?.entries ?? 0), bytes: Number(rows[0]?.bytes ?? 0) };
+  }
+
+  // Per-novel breakdown (refs LEFT JOIN translations so orphaned refs still
+  // report a count). One grouped query, capped at 200 groups — the storage
+  // screen never needs more rows than that.
+  async statsByNovel(): Promise<MemoryNovelStats[]> {
+    const rows = await this.driver.query<{
+      novelId: string;
+      count: number;
+      bytes: number;
+    }>(
+      `SELECT r.novelId AS novelId, COUNT(*) AS count, COALESCE(SUM(t.bytes),0) AS bytes
+        FROM translation_refs r LEFT JOIN translations t ON t.key = r.key
+        GROUP BY r.novelId ORDER BY bytes DESC LIMIT 200`,
+    );
+    return rows.map(row => ({
+      novelId: row.novelId,
+      count: Number(row.count),
+      bytes: Number(row.bytes),
+    }));
   }
 
   async removeChapter(novelId: string, chapterId: string): Promise<void> {

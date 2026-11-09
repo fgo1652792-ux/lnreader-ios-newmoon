@@ -1,8 +1,24 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { NovelItem } from '@plugins/types';
 
 import { getPlugin } from '@plugins/pluginManager';
 import { FilterToValues, Filters } from '@plugins/types/filterTypes';
+import {
+  ARABIC_QUERY_PATTERN,
+  pluginSearchTarget,
+  translateSearchQuery,
+} from '@services/translation';
+
+// Sentinel row inserted between original search results and the appended
+// translated-query results; the screen renders it as a caption divider.
+export const TRANSLATED_RESULTS_DIVIDER_PATH = '__translated_query_divider__';
+
+export const TRANSLATED_RESULTS_DIVIDER: NovelItem = {
+  id: undefined,
+  name: '',
+  path: TRANSLATED_RESULTS_DIVIDER_PATH,
+  cover: '',
+};
 
 export const useBrowseSource = (
   pluginId: string,
@@ -162,6 +178,14 @@ export const useSearchSource = (pluginId: string) => {
   const [hasNextSearchPage, setHasNextSearchPage] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchText, setSearchText] = useState('');
+  // Side-effect results of the translated-query search (Arabic query on a
+  // non-Arabic source). Kept OUT of the primary search state machine: the
+  // originals + pagination below never read or write it, and the screen
+  // appends it (deduped) after the originals under a labeled divider.
+  const [translated, setTranslated] = useState<{
+    query: string;
+    novels: NovelItem[];
+  } | null>(null);
 
   const searchSource = (searchTerm: string) => {
     searchGenerationRef.current += 1;
@@ -172,6 +196,7 @@ export const useSearchSource = (pluginId: string) => {
     requestedPageRef.current = 1;
     setSearchText(searchTerm);
     setIsSearching(true);
+    setTranslated(null);
   };
 
   const isScreenMounted = useRef(true);
@@ -251,6 +276,63 @@ export const useSearchSource = (pluginId: string) => {
     }
   }, [currentPage, fetchNovels, searchText]);
 
+  // Translated second search (Arabic query + non-Arabic source). Fully
+  // cancellable: a new search text / unmount flips `cancelled` and every
+  // late state write is dropped. A failure here is silently ignored — the
+  // original results are the source of truth.
+  useEffect(() => {
+    if (!searchText) {
+      return;
+    }
+    let cancelled = false;
+    const searchTranslated = async () => {
+      try {
+        const plugin = getPlugin(pluginId);
+        if (!plugin) {
+          return;
+        }
+        const target = pluginSearchTarget(plugin.lang);
+        if (!target || !ARABIC_QUERY_PATTERN.test(searchText)) {
+          return;
+        }
+        const translatedQuery = await translateSearchQuery(searchText, target);
+        if (cancelled || !translatedQuery || translatedQuery === searchText) {
+          return;
+        }
+        const translatedRes = await plugin.searchNovels(translatedQuery, 1);
+        if (cancelled) {
+          return;
+        }
+        setTranslated({ query: translatedQuery, novels: translatedRes });
+      } catch {
+        // No translated results — the originals stay untouched.
+      }
+    };
+    void searchTranslated();
+    return () => {
+      cancelled = true;
+    };
+  }, [pluginId, searchText]);
+
+  const { searchResultsMerged, translatedQuery } = useMemo(() => {
+    if (!translated || translated.novels.length === 0) {
+      return { searchResultsMerged: searchResults, translatedQuery: undefined };
+    }
+    const seen = new Set(searchResults.map(novel => novel.path));
+    const additions = translated.novels.filter(novel => !seen.has(novel.path));
+    if (additions.length === 0) {
+      return { searchResultsMerged: searchResults, translatedQuery: undefined };
+    }
+    return {
+      searchResultsMerged: [
+        ...searchResults,
+        TRANSLATED_RESULTS_DIVIDER,
+        ...additions,
+      ],
+      translatedQuery: translated.query,
+    };
+  }, [searchResults, translated]);
+
   const clearSearchResults = useCallback(() => {
     setSearchText('');
     setSearchResults([]);
@@ -258,15 +340,17 @@ export const useSearchSource = (pluginId: string) => {
     setHasNextSearchPage(true);
     lastLoadedPageRef.current = 0;
     requestedPageRef.current = 1;
+    setTranslated(null);
   }, []);
 
   return {
     isSearching,
-    searchResults,
+    searchResults: searchResultsMerged,
     hasNextSearchPage,
     searchNextPage,
     searchSource,
     clearSearchResults,
     searchError,
+    translatedQuery,
   };
 };

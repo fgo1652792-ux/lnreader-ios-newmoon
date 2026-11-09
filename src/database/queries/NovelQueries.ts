@@ -146,6 +146,23 @@ export const getNovelById = (novelId: number): DBNovelInfo | undefined => {
   );
 };
 
+/**
+ * Batch id→name lookup for the Data & Storage screen (translation-memory
+ * rows carry numeric DB novel ids; one query resolves every referenced name).
+ */
+export const getNovelNamesByIds = async (
+  novelIds: number[],
+): Promise<{ id: number; name: string }[]> => {
+  if (!novelIds.length) {
+    return [];
+  }
+  return dbManager
+    .select({ id: novelSchema.id, name: novelSchema.name })
+    .from(novelSchema)
+    .where(inArray(novelSchema.id, novelIds))
+    .all();
+};
+
 export const getNovelByPath = (
   novelPath: string,
   pluginId: string,

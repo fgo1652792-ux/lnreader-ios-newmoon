@@ -1082,8 +1082,19 @@
       "crashLogs": "سجلات الأعطال والتشخيص",
       "caches": "الذاكرة المؤقتة (كاش)",
       "databases": "قواعد البيانات (المكتبة والإعدادات)",
+      "translations": "الترجمات المحفوظة (عناوين وملخصات وفصول)",
       "temp": "الملفات المؤقتة"
     }
+  },
+  "translationsStorage": {
+    "title": "الترجمات المحفوظة",
+    "entries": "%{count} سجلات",
+    "size": "%{mb} م.ب",
+    "deleteTitle": "حذف الترجمات؟",
+    "deleteMessage": "ستُحذف الترجمات المحفوظة لهذه الرواية. الفصول الأصلية وبيانات المكتبة لا تتأثر.",
+    "deleted": "تم حذف الترجمات",
+    "empty": "لا توجد ترجمات محفوظة بعد",
+    "note": "حذف الترجمات لا يمس رواياتك أو فصولك الأصلية."
   },
   "appearanceCustom": {
     "title": "تخصيص المظهر",
@@ -1244,6 +1255,8 @@
     "showTranslation": "إظهار الترجمة",
     "retranslateSummary": "إعادة الترجمة",
     "translatingSummary": "جارٍ الترجمة…",
-    "originalTitleLabel": "الاسم الأصلي"
+    "originalTitleLabel": "الاسم الأصلي",
+    "searchTranslatedChip": "نتائج بالاسم المترجم",
+    "searchTranslatedQuery": "بحث بالاسم المترجم: %{query}"
   }
 }

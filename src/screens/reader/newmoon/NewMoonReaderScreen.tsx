@@ -992,6 +992,15 @@ const NewMoonReaderScreen = ({
     // bridgeRef is a stable ref; the controller lives for the whole mount.
   }, []);
 
+  // v3: picking up preference changes made in the settings screen without
+  // any WebView reload — the controller re-reads MMKV on every focus.
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      translationCtlRef.current?.refreshPrefs();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
   // Latest-closure re-binding (never during render — react-compiler rule).
   useEffect(() => {
     translationCtlRef.current?.setNavigation(routeName => {
@@ -1107,6 +1116,24 @@ const NewMoonReaderScreen = ({
           // section scrolling and non-continuous neighbor navigation).
           viewedWNumRef.current = wNum;
           queueScrollSave(wNum, inOffset, ratio);
+          break;
+        }
+        case 'scrollMetrics': {
+          // v3 scroll instrumentation: real frame pacing per gesture, used by
+          // the simulator scroll-quality runs and visible in device logs.
+          if (__DEV__) {
+            // eslint-disable-next-line no-console
+            console.log(
+              '[moon-scroll]',
+              JSON.stringify({
+                frames: event.frames,
+                longFrames: event.longFrames,
+                maxFrameMs: event.maxFrame,
+                avgFrameMs: event.avgFrame,
+                durationMs: event.durationMs,
+              }),
+            );
+          }
           break;
         }
         case 'needNext':

@@ -183,11 +183,11 @@ describe('ReaderTranslationCoordinator', () => {
     expect(coordinator.status).toBe('completed');
   });
 
-  it('keeps applied items, surfaces the Arabic failure and retries the failed batch after resume', async () => {
-    // Engine 'ai' batches sequentially, so the failure order is deterministic:
-    // batch 1 (64 items) succeeds, batch 2 rejects, batch 3 waits for resume.
-    // The failed batch itself returns to the queue (Zeus re-collect parity),
-    // so resume retries it: 64 applied → fail → 64 + 2 → 130 total.
+  it('keeps applied items, surfaces the Arabic failure and retries after resume (AI parts)', async () => {
+    // v3 AI policy: 300 × 120-char segments ≈ 10.8k estimated tokens → the
+    // planner emits 2 whole-chapter parts (≤ default ceiling of 3). Part 1
+    // succeeds and stays applied; part 2 fails → paused + requeued; resume
+    // retries ONLY the missing part (no re-billing for saved part 1).
     let attempts = 0;
     const flaky = jest.fn(
       async (input: TranslationSegment[]): Promise<TranslationSegment[]> => {
@@ -197,28 +197,34 @@ describe('ReaderTranslationCoordinator', () => {
       },
     ) as unknown as jest.MockedFunction<typeof translateSegments>;
 
-    const { coordinator, applied, progress } = buildHarness(flaky, 'ai');
-    const segments = Array.from({ length: 130 }, (_, index) => segment(`نص رقم ${index}`, 2));
-    coordinator.addSegments(segments, SCOPE); // background batches of 64
+    const { coordinator, applied, progress, translate } = buildHarness(flaky, 'ai');
+    const longText = 'نص طويل للفصل. '.repeat(8); // 120 chars
+    const segments = Array.from({ length: 300 }, (_, index) =>
+      segment(`${longText}#${index}`, 2),
+    );
+    coordinator.addSegments(segments, SCOPE); // one whole-chapter round
 
     expect(await flushUntil(coordinator, 'paused')).toBe(true);
     expect(coordinator.status).toBe('paused');
     expect(progress[progress.length - 1]?.error).toContain('فشل');
-    // Everything applied before the failure stays applied.
-    expect(applied.flat()).toHaveLength(64);
+    // Part 1 was applied and saved before the failure; the request counter
+    // reflects only the requests actually spent.
+    expect(applied.flat()).toHaveLength(150);
     expect(applied.flat().every(item => item.text.startsWith(PREFIX))).toBe(true);
+    expect(progress[progress.length - 1]?.requests).toBe(2);
+    // Two translate calls so far: part 1 + failed part 2.
+    expect(translate).toHaveBeenCalledTimes(2);
 
     coordinator.resume();
     expect(await flushUntil(coordinator, 'completed')).toBe(true);
     expect(coordinator.status).toBe('completed');
-    expect(progress[progress.length - 1]).toMatchObject({ error: null, completed: 130 });
-    // 64 items from before the failure, then the retried 64 + 2 queued.
-    expect(applied.flat()).toHaveLength(130);
-    // attempts: 64 ok, 64 fails, retried 64 ok, final 2 ok.
-    expect(attempts).toBe(4);
+    expect(progress[progress.length - 1]).toMatchObject({ error: null, completed: 300 });
+    // Retry covered ONLY part 2 — part 1 was never re-sent.
+    expect(applied.flat()).toHaveLength(300);
+    expect(attempts).toBe(3);
     // Every segment ends translated exactly once (no double-apply).
     const ids = applied.flat().map(item => item.id);
-    expect(new Set(ids).size).toBe(130);
+    expect(new Set(ids).size).toBe(300);
   });
 
   it('restore() resets all counters so progress reports total 0', async () => {
@@ -236,6 +242,7 @@ describe('ReaderTranslationCoordinator', () => {
       total: 0,
       reused: 0,
       error: null,
+      requests: 0,
     });
   });
 

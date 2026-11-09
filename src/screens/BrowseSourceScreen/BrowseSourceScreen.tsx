@@ -9,12 +9,16 @@ import FilterBottomSheet from './components/FilterBottomSheet';
 
 import { useSearch } from '@hooks';
 import { useTheme } from '@hooks/persisted';
-import { useBrowseSource, useSearchSource } from './useBrowseSource';
+import {
+  TRANSLATED_RESULTS_DIVIDER_PATH,
+  useBrowseSource,
+  useSearchSource,
+} from './useBrowseSource';
 
 import { NovelItem } from '@plugins/types';
 import { getPlugin } from '@plugins/pluginManager';
 import { getString } from '@i18n/translations';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import { NovelInfo } from '@database/types';
 import SourceScreenSkeletonLoading from '@screens/browse/loadingAnimation/SourceScreenSkeletonLoading';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -46,6 +50,7 @@ const BrowseSourceScreen = ({ route, navigation }: BrowseSourceScreenProps) => {
     hasNextSearchPage,
     clearSearchResults,
     searchError,
+    translatedQuery,
   } = useSearchSource(pluginId);
   const novelList = searchResults.length > 0 ? searchResults : novels;
   const errorMessage = error || searchError;
@@ -172,6 +177,20 @@ const BrowseSourceScreen = ({ route, navigation }: BrowseSourceScreenProps) => {
             ) : null
           }
           renderItem={({ item }) => {
+            if (item.path === TRANSLATED_RESULTS_DIVIDER_PATH) {
+              return (
+                <Text
+                  style={[
+                    styles.translatedCaption,
+                    { color: theme.onSurfaceVariant },
+                  ]}
+                >
+                  {getString('translationScreen.searchTranslatedQuery', {
+                    query: translatedQuery ?? '',
+                  })}
+                </Text>
+              );
+            }
             const inLibrary = novelInLibrary(pluginId, item.path);
 
             return (
@@ -195,6 +214,7 @@ const BrowseSourceScreen = ({ route, navigation }: BrowseSourceScreenProps) => {
                 }}
                 hasSelection={false}
                 imageRequestInit={imageRequestInit}
+                pluginId={pluginId}
               />
             );
           }}
@@ -239,5 +259,10 @@ const styles = StyleSheet.create({
     margin: 16,
     position: 'absolute',
     end: 0,
+  },
+  translatedCaption: {
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
   },
 });

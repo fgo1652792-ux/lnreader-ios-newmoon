@@ -1082,8 +1082,19 @@
       "crashLogs": "Crash & diagnostic logs",
       "caches": "Cache",
       "databases": "Databases (library & settings)",
+      "translations": "Saved translations (titles, summaries, chapters)",
       "temp": "Temporary files"
     }
+  },
+  "translationsStorage": {
+    "title": "Saved translations",
+    "entries": "%{count} entries",
+    "size": "%{mb} MB",
+    "deleteTitle": "Delete translations?",
+    "deleteMessage": "Saved translations for this novel will be deleted. Original chapters and library data are untouched.",
+    "deleted": "Translations deleted",
+    "empty": "No saved translations yet",
+    "note": "Deleting translations never touches your original novels or chapters."
   },
   "appearanceCustom": {
     "title": "Appearance customization",
@@ -1244,6 +1255,8 @@
     "showTranslation": "Show translation",
     "retranslateSummary": "Re-translate",
     "translatingSummary": "Translating…",
-    "originalTitleLabel": "Original title"
+    "originalTitleLabel": "Original title",
+    "searchTranslatedChip": "Results via translated name",
+    "searchTranslatedQuery": "Search by translated name: %{query}"
   }
 }

@@ -59,8 +59,14 @@ export const AI_PLAN_DEFAULTS: AIPlanLimits = {
   maxRequestsPerChapter: 3,
 };
 
-export const clampMaxRequests = (value: number): number =>
-  Math.min(12, Math.max(1, Math.round(value) || AI_PLAN_DEFAULTS.maxRequestsPerChapter));
+export const clampMaxRequests = (value: number): number => {
+  const rounded = Math.round(value);
+  const base =
+    Number.isFinite(rounded) && rounded >= 1
+      ? rounded
+      : AI_PLAN_DEFAULTS.maxRequestsPerChapter;
+  return Math.min(12, Math.max(1, base));
+};
 
 export interface AIPlan {
   // Slice indexes: parts[i] = [start, end) over the ordered segment array.
@@ -87,35 +93,30 @@ export const planAIParts = (
     return { parts: [], requests: 0, exceedsCeiling: false };
   }
 
-  // Estimate the required request count from the total output size.
+  // Natural request count: how many budget-sized requests the chapter needs.
+  // A chapter that fits ONE request stays ONE request; 4,000 words (~24k
+  // chars ≈ 7k tokens) lands at 2; only genuinely huge chapters exceed the
+  // user's ceiling — and then we PAUSE for approval instead of spending.
   let totalTokens = 0;
   for (const segment of segments) totalTokens += estimateTokens(segment.text);
+  const natural = Math.min(
+    Math.max(1, Math.ceil(totalTokens / config.outputTokenBudget)),
+    segments.length,
+  );
 
-  const parts = cutParts(segments, totalTokens, config, maxRequests + 1);
-  let requests = parts.length;
-
-  if (requests > maxRequests) {
-    // Re-cut into exactly maxRequests larger parts IF they still respect the
-    // per-part char/segment ceilings; otherwise keep the extra parts but
-    // flag for user approval.
-    const merged = cutParts(segments, totalTokens, config, maxRequests);
-    if (merged.length <= maxRequests) {
-      return { parts: merged, requests: merged.length, exceedsCeiling: false };
-    }
-    return {
-      parts,
-      requests,
-      exceedsCeiling: true,
-      reason:
-        `هذا الفصل كبير: يُقدَّر بـ ${requests} طلبات ذكاء اصطناعي ` +
-        `والحد الحالي ${maxRequests}. تابع للموافقة على الطلبات الإضافية، ` +
-        'أو اختر نموذجًا أكبر سيُترجم الفصل بطلبات أقل.',
-    };
+  const parts = cutParts(segments, totalTokens, config, natural);
+  if (parts.length <= maxRequests) {
+    return { parts, requests: parts.length, exceedsCeiling: false };
   }
-
-  // Small-chapter fast path: one whole-chapter request when it fits.
-  void requests;
-  return { parts, requests: parts.length, exceedsCeiling: false };
+  return {
+    parts,
+    requests: parts.length,
+    exceedsCeiling: true,
+    reason:
+      `هذا الفصل كبير: يُقدَّر بـ ${parts.length} طلبات ذكاء اصطناعي ` +
+      `والحد الحالي ${maxRequests}. تابع للموافقة على الطلبات الإضافية، ` +
+      'أو اختر نموذجًا أكبر سيُترجم الفصل بطلبات أقل.',
+  };
 };
 
 // Greedy fill: walk segments in order, close a part when the NEXT segment

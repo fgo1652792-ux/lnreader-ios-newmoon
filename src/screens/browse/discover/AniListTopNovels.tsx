@@ -156,6 +156,7 @@ const BrowseALScreen = ({ navigation }: BrowseALScreenProps) => {
     <DiscoverNovelCard
       novel={item}
       theme={theme}
+      pluginId="anilist"
       onPress={() =>
         navigation.navigate('GlobalSearchScreen', {
           searchText: item.novelName,

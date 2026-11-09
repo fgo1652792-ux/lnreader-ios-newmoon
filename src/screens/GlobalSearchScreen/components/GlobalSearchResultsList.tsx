@@ -115,59 +115,76 @@ const GlobalSearchSourceResults: React.FC<{ item: GlobalSearchResult }> = ({
               {item.error}
             </Text>
           ) : (
-            <FlatList
-              horizontal
-              contentContainerStyle={styles.novelsContainer}
-              keyExtractor={novelItem => item.plugin.id + '_' + novelItem.path}
-              data={item.novels}
-              extraData={inActivity}
-              ListEmptyComponent={
-                <Text style={[styles.listEmpty, { color: noResultsColor }]}>
-                  {getString('sourceScreen.noResultsFound')}
+            <>
+              {item.translatedQuery ? (
+                <Text
+                  style={[
+                    styles.translatedQuery,
+                    { color: theme.onSurfaceVariant },
+                  ]}
+                >
+                  {getString('translationScreen.searchTranslatedQuery', {
+                    query: item.translatedQuery,
+                  })}
                 </Text>
-              }
-              renderItem={({ item: novelItem }) => {
-                const inLibrary = novelInLibrary(
-                  item.plugin.id,
-                  novelItem.path,
-                );
+              ) : null}
+              <FlatList
+                horizontal
+                contentContainerStyle={styles.novelsContainer}
+                keyExtractor={novelItem =>
+                  item.plugin.id + '_' + novelItem.path
+                }
+                data={item.novels}
+                extraData={inActivity}
+                ListEmptyComponent={
+                  <Text style={[styles.listEmpty, { color: noResultsColor }]}>
+                    {getString('sourceScreen.noResultsFound')}
+                  </Text>
+                }
+                renderItem={({ item: novelItem }) => {
+                  const inLibrary = novelInLibrary(
+                    item.plugin.id,
+                    novelItem.path,
+                  );
 
-                return (
-                  <NovelCover
-                    globalSearch
-                    item={novelItem}
-                    libraryStatus={inLibrary}
-                    inActivity={inActivity[novelItem.path]}
-                    onPress={() =>
-                      navigateToNovel({
-                        ...novelItem,
-                        pluginId: item.plugin.id,
-                      })
-                    }
-                    theme={theme}
-                    onLongPress={async () => {
-                      setInActivity(prev => ({
-                        ...prev,
-                        [novelItem.path]: true,
-                      }));
+                  return (
+                    <NovelCover
+                      globalSearch
+                      item={novelItem}
+                      libraryStatus={inLibrary}
+                      inActivity={inActivity[novelItem.path]}
+                      onPress={() =>
+                        navigateToNovel({
+                          ...novelItem,
+                          pluginId: item.plugin.id,
+                        })
+                      }
+                      theme={theme}
+                      onLongPress={async () => {
+                        setInActivity(prev => ({
+                          ...prev,
+                          [novelItem.path]: true,
+                        }));
 
-                      await switchNovelToLibrary(
-                        novelItem.path,
-                        item.plugin.id,
-                      );
+                        await switchNovelToLibrary(
+                          novelItem.path,
+                          item.plugin.id,
+                        );
 
-                      setInActivity(prev => ({
-                        ...prev,
-                        [novelItem.path]: false,
-                      }));
-                    }}
-                    hasSelection={false}
-                    isSelected={false}
-                    imageRequestInit={imageRequestInit}
-                  />
-                );
-              }}
-            />
+                        setInActivity(prev => ({
+                          ...prev,
+                          [novelItem.path]: false,
+                        }));
+                      }}
+                      hasSelection={false}
+                      isSelected={false}
+                      imageRequestInit={imageRequestInit}
+                      pluginId={item.plugin.id}
+                    />
+                  );
+                }}
+              />
+            </>
           )}
         </View>
       </>
@@ -182,6 +199,7 @@ const GlobalSearchSourceResults: React.FC<{ item: GlobalSearchResult }> = ({
       item.plugin.lang,
       item.plugin.name,
       item.plugin.site,
+      item.translatedQuery,
       navigateToNovel,
       navigation,
       imageRequestInit,
@@ -226,6 +244,11 @@ const styles = StyleSheet.create({
   sourceName: {
     marginBottom: 4,
     marginTop: 8,
+    paddingHorizontal: 16,
+  },
+  translatedQuery: {
+    fontSize: 12,
+    marginBottom: 4,
     paddingHorizontal: 16,
   },
 });
