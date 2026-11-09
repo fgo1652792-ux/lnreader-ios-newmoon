@@ -1121,9 +1121,8 @@ const NewMoonReaderScreen = ({
         case 'scrollMetrics': {
           // v3 scroll instrumentation: real frame pacing per gesture, used by
           // the simulator scroll-quality runs and visible in device logs.
-          if (__DEV__) {
-            // eslint-disable-next-line no-console
-            console.log(
+          // eslint-disable-next-line no-console
+          console.log(
               '[moon-scroll]',
               JSON.stringify({
                 frames: event.frames,
@@ -1131,9 +1130,8 @@ const NewMoonReaderScreen = ({
                 maxFrameMs: event.maxFrame,
                 avgFrameMs: event.avgFrame,
                 durationMs: event.durationMs,
-              }),
-            );
-          }
+            }),
+          );
           break;
         }
         case 'needNext':

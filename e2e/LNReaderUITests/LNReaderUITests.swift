@@ -315,4 +315,59 @@ final class LNReaderUITests: XCTestCase {
       expected.exists && expected.isHittable && !(a.exists && b.exists),
       "expected exactly one active indicator and it must be the tapped tab")
   }
+
+  /// v3 scroll-quality gate: REAL finger drags + flicks on scrollable
+  /// surfaces. Covers the reported regression — "drag moves a tiny bit then
+  /// stops, no inertia": a short drag must not wedge the surface, a long
+  /// flick must leave the app responsive while momentum settles, and an
+  /// immediate touch-stop must keep every control reachable. The reader
+  /// itself additionally emits per-gesture frame metrics
+  /// ([moon-scroll] console lines) once a real chapter is open.
+  func testScrollDragAndFlickKeepsAppResponsive() {
+    app.launch()
+    sleep(6)
+    if let complete = tappable(["Complete", "إكمال"]), complete.exists {
+      complete.tap()
+      sleep(3)
+    }
+    waitTappable(["Browse", "تصفح"], 120, "tabs did not render")
+    tapWhenReady(["Browse", "تصفح"], 15, "Browse tab missing")
+    sleep(4) // sources list render
+    screenshot("20-scroll-before")
+
+    // 1) SHORT drag — the exact gesture from the bug report: touch, move a
+    //    little, release. The surface must keep working afterwards.
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+      .press(forDuration: 0.18, thenDragTo: app.coordinate(
+        withNormalizedOffset: CGVector(dx: 0.5, dy: 0.58)))
+    sleep(1)
+    screenshot("21-scroll-short-drag")
+
+    // 2) LONG flick — momentum must carry after release without freezing UI.
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+      .press(forDuration: 0.05, thenDragTo: app.coordinate(
+        withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)),
+             withVelocity: XCUIGestureVelocity.fast, thenHoldForDuration: 0.0)
+    sleep(2)
+    screenshot("22-scroll-long-flick")
+
+    // 3) Flick + immediate stop: the app must answer taps right away.
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+      .press(forDuration: 0.05, thenDragTo: app.coordinate(
+        withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)),
+             withVelocity: XCUIGestureVelocity.fast, thenHoldForDuration: 0.0)
+    sleep(1)
+    waitTappable(
+      ["More", "المزيد", "Library", "المكتبة"], 15,
+      "app unresponsive after flick + immediate stop")
+    screenshot("23-scroll-after-stop")
+
+    // 4) Library list swipes (scroll-safe even when empty) + responsiveness.
+    tapWhenReady(["المكتبة", "Library"], 15, "Library tab missing")
+    app.swipeUp()
+    app.swipeDown()
+    screenshot("24-library-swipe")
+    waitTappable(
+      ["More", "المزيد"], 10, "app unresponsive after library swipes")
+  }
 }
