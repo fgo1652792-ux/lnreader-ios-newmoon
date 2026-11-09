@@ -716,6 +716,10 @@ function bridgeScript() {
     var h = s.offsetHeight;
     if (!h || h < 200) h = prevMin || 6000; // never-rendered section → placeholder
     s.style.minHeight = h + 'px';
+    // v3 scroll fix: sync the content-visibility placeholder with the REAL
+    // measured height. A mismatched 'auto 6000px' placeholder forces WebKit
+    // scroll-anchoring corrections mid-gesture (jumps + dropped momentum).
+    s.style.containIntrinsicSize = 'auto ' + h + 'px';
     s.setAttribute('data-wor-unloaded', '1');
     s.innerHTML = '';
   }
@@ -726,9 +730,19 @@ function bridgeScript() {
     var mh = parseFloat(s.style.minHeight) || 0;
     s.innerHTML = html;
     s.style.minHeight = '';
+    s.style.containIntrinsicSize = '';
     s.removeAttribute('data-wor-unloaded');
     delete chapterHtmlStash[num];
     return s.offsetHeight - mh; // height delta for scroll re-anchoring
+  }
+  // v3 scroll fix: NEVER re-anchor (window.scrollTo) while the user is still
+  // dragging or momentum-scrolling — a programmatic scrollTo during an active
+  // WKWebView pan CANCELS the native gesture and its inertia (the reported
+  // "drag moves a bit then stops"). Anchoring happens only once scrolling has
+  // truly been idle, and at most twice per second.
+  var lastAnchorAt = 0;
+  function touchIdleForAnchoring() {
+    return !touchActive && (Date.now() - lastTouchEndAt > 350) && (Date.now() - lastScrollAt > 180);
   }
   function enforceWindow(y) {
     var secs = $all('.wor-chapter-sec[data-ch]');
@@ -761,9 +775,11 @@ function bridgeScript() {
       var delta = restoreSection(secs[best]);
       changed = true;
       // section above the viewport grew/shrank → keep the reading view pinned
-      if (tops[best].top <= y && Math.abs(delta) > 2) {
-        y += delta;
-        window.scrollTo(0, y);
+      // (ONLY when no finger/momentum is in flight — see touchIdleForAnchoring)
+      var nowMs = Date.now();
+      if (tops[best].top <= y && Math.abs(delta) > 2 && touchIdleForAnchoring() && nowMs - lastAnchorAt > 500) {
+        lastAnchorAt = nowMs;
+        window.scrollTo(0, y + delta);
       }
     }
     if (changed) invalidateSectionTops();
@@ -792,29 +808,56 @@ function bridgeScript() {
   }
   function onScroll() {
     if (scrollRaf) return;
-    scrollRaf = requestAnimationFrame(function () {
+    scrollRaf = requestAnimationFrame(function (ts) {
       scrollRaf = 0;
+      // v3 metrics: frame pacing while scrolling (real numbers, no invention)
+      if (scrollMetrics && !scrollMetrics.sent) {
+        if (scrollMetrics.lastTs) {
+          var fd = ts - scrollMetrics.lastTs;
+          scrollMetrics.frames += 1;
+          scrollMetrics.total += fd;
+          if (fd > scrollMetrics.maxFrame) scrollMetrics.maxFrame = fd;
+          if (fd > 34) scrollMetrics.longFrames += 1;
+        }
+        scrollMetrics.lastTs = ts;
+      }
       // READ phase first (one layout), then WRITE phase — interleaving reads
       // and writes here forces the engine to re-layout the document on every
       // frame, which was another scroll-stutter source.
       var y = window.scrollY || window.pageYOffset || 0;
       var doc = document.documentElement;
-      var max = doc.scrollHeight - window.innerHeight;
-      var act = null;
+      // v3 scroll fix: scrollHeight is layout-dirtying to read every frame;
+      // refresh it at most every 250 ms (progress granularity is 220 ms anyway).
       var now = Date.now();
+      lastScrollAt = now; // momentum marker: gates windowing/re-anchoring
+      idleScrollWork();   // runs 420 ms after scrolling fully settles
+      if (!docMaxCache || now - docMaxAt > 250) {
+        docMaxCache = doc.scrollHeight - window.innerHeight;
+        docMaxAt = now;
+      }
+      var max = docMaxCache;
+      var act = null;
       var needProgress = now - lastSent > 220;
       if (needProgress) act = activeSectionAt(y);
       var ratio = max > 0 ? clamp(y / max, 0, 1) : 0;
       var nearEnd = S.continuousMode && !window.__worEnd && !window.__worNeedLock
         && (y >= max - 1400);
-      // DOM windowing: unload far chapters / restore entering ones (all iOS)
-      if (S.continuousMode) enforceWindow(y);
+      // DOM windowing: unload far chapters / restore entering ones.
+      // v3: NEVER mid-gesture — innerHTML restores + re-anchor scrollTo during
+      // an active pan cancel the iOS momentum. Deferred to idle instead.
+      if (S.continuousMode && touchIdleForAnchoring()) enforceWindow(y);
 
-      // WRITE phase
+      // WRITE phase — compositor-only: transform instead of width keeps the
+      // progress bar off the main-thread layout path entirely.
       var fill = $('[data-wor-reader-chapter-progress-fill]');
       if (fill) {
-        var w = (ratio * 100).toFixed(2) + '%';
-        if (fill.style.width !== w) fill.style.width = w;
+        if (!fill.__worFillInit) {
+          fill.style.width = '100%';
+          fill.style.transformOrigin = '0 50%';
+          fill.__worFillInit = 1;
+        }
+        var tf = 'scaleX(' + ratio.toFixed(4) + ')';
+        if (fill.style.transform !== tf) fill.style.transform = tf;
       }
       if (needProgress && act) {
         lastSent = now;
@@ -828,6 +871,44 @@ function bridgeScript() {
       }
     });
   }
+
+  // ---- v3 scroll responsiveness -------------------------------------------
+  // touchActive/lastTouchEndAt/lastScrollAt gate windowing + re-anchoring.
+  // idleScrollWork runs once scrolling + momentum have fully settled: it
+  // finishes deferred windowing and reports the collected frame metrics.
+  var touchActive = false;
+  var lastTouchEndAt = 0;
+  var lastScrollAt = 0;
+  var docMaxCache = 0;
+  var docMaxAt = 0;
+  var scrollMetrics = null;
+  function beginScrollGesture() {
+    touchActive = true;
+    if (!scrollMetrics || scrollMetrics.sent) {
+      scrollMetrics = { frames: 0, longFrames: 0, maxFrame: 0, total: 0, start: Date.now(), lastTs: 0, sent: false };
+    }
+  }
+  function endScrollGesture() {
+    touchActive = false;
+    lastTouchEndAt = Date.now();
+    idleScrollWork();
+  }
+  var idleScrollWork = debounce(function () {
+    lastScrollAt = 0;
+    if (S.continuousMode && touchIdleForAnchoring()) onScroll(); // finish deferred windowing
+    var m = scrollMetrics;
+    if (m && !m.sent && m.frames > 5) {
+      m.sent = true;
+      send({
+        t: 'scrollMetrics',
+        frames: m.frames,
+        longFrames: m.longFrames,
+        maxFrame: Math.round(m.maxFrame),
+        avgFrame: Math.round(m.total / Math.max(1, m.frames)),
+        durationMs: Date.now() - m.start
+      });
+    }
+  }, 420);
 
   // ============================ chapters sheet ============================
   function requestServerSearch(q) {
@@ -1596,12 +1677,20 @@ function bridgeScript() {
     window.addEventListener('scroll', onScroll, { passive: true });
     // Size changes (rotation, font loading, toolbars) move every section top —
     // drop the cache so progress tracking stays accurate.
-    window.addEventListener('resize', invalidateSectionTops, { passive: true });
+    window.addEventListener('resize', function () {
+      invalidateSectionTops();
+      docMaxCache = 0;
+    }, { passive: true });
     document.addEventListener('touchstart', function () {
       lastTouchAt = Date.now();
       userTouched = true;
       touchStartScrollY = window.scrollY || 0;
+      beginScrollGesture();
     }, { passive: true });
+    // v3: track the FULL gesture lifecycle so windowing/re-anchoring never
+    // fight the reader's finger, and momentum keeps its native inertia.
+    document.addEventListener('touchend', endScrollGesture, { passive: true });
+    document.addEventListener('touchcancel', endScrollGesture, { passive: true });
     // author card click
     var authorCard = $('[data-wor-author-card]');
     authorCard && authorCard.addEventListener('click', function () { send({ t: 'profile' }); });
@@ -1621,12 +1710,13 @@ function bridgeScript() {
     active: false,         // a translation round is running
     savedLang: null,       // original <html lang>, saved once per page
     serial: 0,             // stable-id serial (never reused)
-    origLimit: 4000        // originals Map cap (oldest evicted)
+    origLimit: 4000,       // originals Map cap (oldest evicted)
+    caps: null             // v3 engine-aware collect caps {maxCharacters,maxSegments}
   };
   var trById = new Map();      // id → <p> (live elements only, pruned lazily)
   var trElIds = new WeakMap(); // <p> → id (stable across re-collects)
   var trOrig = new Map();      // id → original innerHTML (applied paragraphs)
-  var trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null };
+  var trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null, requests: 0 };
   var trObserver = null;
   var TR_HAS_LETTER = /\\p{L}/u; // paragraph must contain at least one letter
   var TR_RTL_CODES = ['ar', 'fa', 'ur', 'he', 'ps', 'yi'];
@@ -1732,8 +1822,11 @@ function bridgeScript() {
   }
   // Build ONE batch. prioritize → only the lowest tier (Zeus: never mix tiers
   // in a visible round), caps 24000 chars / 256 segments; background → mixed
-  // tiers by (tier, distance), caps 10000 / 64. A batch never spans two
-  // sections, so RN's chapter gate (expected) can trust the batch chapter.
+  // tiers by (tier, distance), caps 10000 / 64 — unless RN sent engine-aware
+  // caps (v3 AI policy: the whole chapter per background round, so the
+  // coordinator's batch policy — not the shell — decides the request split).
+  // A batch never spans two sections, so RN's chapter gate (expected) can
+  // trust the batch chapter.
   function trCollectBatch(prioritize) {
     trPruneIds();
     var cands = trCandidates();
@@ -1743,8 +1836,8 @@ function bridgeScript() {
     var pool = prioritize
       ? cands.filter(function (c) { return c.tier === cands[0].tier; })
       : cands;
-    var maxChars = prioritize ? 24000 : 10000;
-    var maxSegs = prioritize ? 256 : 64;
+    var maxChars = prioritize ? 24000 : (TR.caps ? TR.caps.maxCharacters : 10000);
+    var maxSegs = prioritize ? 256 : (TR.caps ? TR.caps.maxSegments : 64);
     var segments = [];
     var chars = 0;
     var firstSec = pool[0].sec;
@@ -1829,7 +1922,7 @@ function bridgeScript() {
       TR.savedLang = null;
     }
     TR.active = false;
-    trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null };
+    trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null, requests: 0 };
     trRenderUI();
     send({ t: 'trRestored' });
   }
@@ -1843,7 +1936,7 @@ function bridgeScript() {
     trOrig.clear();
     TR.active = false;
     TR.savedLang = null;
-    trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null };
+    trProgress = { status: 'idle', completed: 0, total: 0, reused: 0, error: null, requests: 0 };
     trRenderUI();
   }
   // trDetect: ~3500 chars of the first live section + the <html lang> hint.
@@ -1921,6 +2014,7 @@ function bridgeScript() {
     if (title) title.textContent = text;
     var metaTxt = trProgress.total > 0 ? (trProgress.completed + ' / ' + trProgress.total) : '';
     if (trProgress.reused > 0) metaTxt += (metaTxt ? ' · ' : '') + 'من الذاكرة: ' + trProgress.reused;
+    if (trProgress.requests > 0) metaTxt += (metaTxt ? ' · ' : '') + 'طلبات النموذج: ' + trProgress.requests;
     if (meta) meta.textContent = metaTxt;
     if (err) {
       var showErr = !!trProgress.error && (st === 'error' || st === 'paused');
@@ -1946,7 +2040,8 @@ function bridgeScript() {
       completed: parseInt(msg.completed, 10) || 0,
       total: parseInt(msg.total, 10) || 0,
       reused: parseInt(msg.reused, 10) || 0,
-      error: msg.error == null ? null : String(msg.error)
+      error: msg.error == null ? null : String(msg.error),
+      requests: parseInt(msg.requests, 10) || 0
     };
     trRenderUI();
   }
@@ -2141,11 +2236,13 @@ function bridgeScript() {
         TR.enabled = !!msg.enabled;
         if (msg.target != null) TR.target = String(msg.target || '');
         if (msg.rtl != null) TR.rtl = !!msg.rtl;
+        TR.caps = (msg.caps && msg.caps.maxCharacters) ? msg.caps : null;
         trRenderUI();
       }
       else if (kind === 'trStart') {
         if (msg.target != null) TR.target = String(msg.target || '');
         if (msg.rtl != null) TR.rtl = !!msg.rtl;
+        if (msg.caps && msg.caps.maxCharacters) TR.caps = msg.caps;
         if (TR.savedLang === null) TR.savedLang = document.documentElement.getAttribute('lang') || '';
         TR.active = true;
         collectAndPost(true, true);

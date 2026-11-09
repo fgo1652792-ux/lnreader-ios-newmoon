@@ -17,6 +17,8 @@ import { InteractionManager } from 'react-native';
 import {
   TranslationFailure,
   TranslationMemory,
+  AI_COLLECT_CAPS,
+  autoEnabled,
   createSqliteMemoryDriver,
   detectLanguage,
   keepsTranslations,
@@ -267,11 +269,15 @@ export class PageTranslationController {
     this.busy = false;
     this.pending = false;
     this.processedCharacters = 0;
-    const offered =
-      prefs.suggest &&
+    const foreign =
       language.length > 0 &&
       primarySubtag(language) !== primarySubtag(prefs.target) &&
       !prefs.excludedHosts.includes(hostOf(this.deps.url()));
+    // v3: automatic translation is INDEPENDENT of the suggestion chip —
+    // autoEnabled('browser') honours the new master switch + scope and keeps
+    // the legacy `automatic` key working. `suggest` only controls the offer.
+    const auto = foreign && autoEnabled('browser', prefs);
+    const offered = auto || (prefs.suggest && foreign);
     this.patch({
       offered,
       running: false,
@@ -281,7 +287,7 @@ export class PageTranslationController {
       error: null,
       sourceLanguage: language,
     });
-    if (offered && prefs.automatic) this.start();
+    if (auto) this.start();
   }
 
   private handleDynamic(kind: 'changed' | 'viewport'): void {
@@ -306,7 +312,13 @@ export class PageTranslationController {
 
   private requestCollect(prioritize: boolean): void {
     if (this.disposed) return;
-    const caps = PAGE_COLLECT_CAPS[this.deps.prefs().engine];
+    const prefs = this.deps.prefs();
+    // v3: the AI engine collects the whole page per round (its coordinator
+    // plans large parts); every other engine keeps its Zeus-verbatim caps.
+    const caps =
+      prefs.engine === 'ai'
+        ? { maxCharacters: AI_COLLECT_CAPS.maxCharacters, maxSegments: AI_COLLECT_CAPS.maxSegments }
+        : PAGE_COLLECT_CAPS[prefs.engine];
     this.deps.inject({
       kind: 'collect',
       maxCharacters: caps.maxCharacters,

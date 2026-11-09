@@ -65,7 +65,7 @@ export const PAGE_TRANSLATION_JS = `function () {
     return RTL_LANGUAGES.indexOf(String(language || '').split('-')[0]) !== -1;
   }
 
-  function eligible(node) {
+  function eligible(node, checkStyle) {
     if (!node || node.nodeType !== 3) return false;
     var parent = node.parentElement;
     if (!parent || typeof parent.closest !== 'function') return false;
@@ -75,6 +75,10 @@ export const PAGE_TRANSLATION_JS = `function () {
     if (trimmed.length === 0) return false;
     if (/^(https?:\\/\\/|www\\.)\\S+$/i.test(trimmed)) return false;
     if (!/\\p{L}/u.test(value)) return false;
+    // v3: getComputedStyle forces style/layout for EVERY candidate node —
+    // only pay that cost where hidden nodes actually matter (collection).
+    // Language sampling answers fine without it.
+    if (checkStyle === false) return true;
     var style = window.getComputedStyle(parent);
     if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
     return true;
@@ -300,7 +304,7 @@ export const PAGE_TRANSLATION_JS = `function () {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
     var current;
     while ((current = walker.nextNode())) {
-      if (!eligible(current)) continue;
+      if (!eligible(current, false)) continue;
       var text = (current.nodeValue || '').trim();
       if (text.length === 0) continue;
       if (sample.length > 0) sample += ' ';
@@ -310,15 +314,24 @@ export const PAGE_TRANSLATION_JS = `function () {
     return sample.slice(0, SAMPLE_LIMIT);
   }
 
+  // v3: lang/sample are only consumed for 'ready' — dynamic/viewport events
+  // are acted on by kind alone, so skip the expensive body walk there.
   function notify(kind) {
+    var needsSample = kind === 'ready';
     post({
       kind: kind,
-      lang: document.documentElement.getAttribute('lang') || '',
-      sample: sampleText(),
+      lang: needsSample ? (document.documentElement.getAttribute('lang') || '') : '',
+      sample: needsSample ? sampleText() : '',
     });
   }
 
+  // v3 browser scroll fix: the observer used to run its debounced full-page
+  // sample walk on EVERY page even with translation OFF — ad-heavy novel
+  // sites mutated constantly and kept the main thread busy mid-scroll.
+  // The pipeline only consumes 'changed' while a run is active, so the
+  // observer now sleeps entirely when inactive.
   var observer = new MutationObserver(function () {
+    if (!active) return;
     if (applying) return;
     // Our own apply() writes queue observer records that fire AFTER the flag
     // cleared (microtask timing) — never echo them back as page changes.
