@@ -8,6 +8,10 @@ import { ThemeColors } from '@theme/types';
 import { ChapterInfo } from '@database/types';
 import MaterialCommunityIcons from '@react-native-vector-icons/material-design-icons';
 import { getString } from '@i18n/translations';
+import {
+  useChapterTitlesEnabled,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
 import { DateFormat, formatDate } from '@utils/dateFormat';
 
 interface ChapterItemProps {
@@ -50,6 +54,18 @@ const ChapterItem: React.FC<ChapterItemProps> = ({
   const { id, name, unread, releaseTime, bookmark, chapterNumber, progress } =
     chapter;
   const isGrouped = variant === 'grouped';
+
+  // Translated chapter title (display-only — chapter.name is never mutated).
+  // Gated by the independent chapter-titles preference; passing undefined
+  // text keeps the pipeline untouched when it is off. ChapterInfo rows carry
+  // no pluginId/novel context, so the shared metadata namespace is used.
+  const chapterTitlesEnabled = useChapterTitlesEnabled();
+  const translatedName = useTranslatedMetadata(
+    'chapterTitle',
+    showChapterTitles && chapterTitlesEnabled ? name : undefined,
+    '',
+    '',
+  );
 
   isBookmarked ??= bookmark ?? false;
 
@@ -152,7 +168,7 @@ const ChapterItem: React.FC<ChapterItemProps> = ({
                 ellipsizeMode="tail"
               >
                 {showChapterTitles
-                  ? name
+                  ? translatedName ?? name
                   : getString('novelScreen.chapterChapnum', {
                       num: chapterNumber,
                     })}

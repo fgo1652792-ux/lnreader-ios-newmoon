@@ -28,8 +28,13 @@ import { NovelScreenProps } from '@navigators/types';
 import { BottomSheetModalMethods } from '@gorhom/bottom-sheet/lib/typescript/types';
 import { UseBooleanReturnType } from '@hooks';
 import { useAppSettings } from '@hooks/persisted';
+import {
+  useTitleMode,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
 import { NovelStatus, PluginItem } from '@plugins/types';
 import { translateNovelStatus } from '@utils/translateEnum';
+import { directionStyleFor } from '@utils/textDirection';
 import { getMMKVObject } from '@utils/mmkv/mmkv';
 import { AVAILABLE_PLUGINS } from '@hooks/persisted/usePlugins';
 import { getPlugin } from '@plugins/pluginManager';
@@ -104,6 +109,17 @@ const NovelInfoHeader = ({
   const { hideBackdrop = false } = useAppSettings();
   const navigation = useNavigation<NovelScreenProps['navigation']>();
   const followNovel = useNovelAction('followNovel');
+
+  // Main novel title (display-only — novel.name is never mutated; search /
+  // clipboard keep using the original). 'original' mode skips translation.
+  const titleMode = useTitleMode();
+  const translatedTitle = useTranslatedMetadata(
+    'title',
+    titleMode === 'original' ? undefined : novel.name,
+    novel.pluginId,
+    novel.path,
+  );
+  const displayedTitle = translatedTitle ?? novel.name;
 
   const pluginName = useMemo(
     () =>
@@ -204,9 +220,21 @@ const NovelInfoHeader = ({
                 onPress={handleTitlePress}
                 onLongPress={handleTitleLongPress}
               >
-                {novel.name}
+                {displayedTitle}
               </NovelTitle>
             </Row>
+            {titleMode === 'both' && translatedTitle !== undefined ? (
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.originalNovelTitle,
+                  { color: theme.onSurfaceVariant },
+                  directionStyleFor(novel.name),
+                ]}
+              >
+                {novel.name}
+              </Text>
+            ) : null}
             {isLoading && novel.id === 'NO_ID' ? (
               <NovelDetailsSkeleton theme={theme} />
             ) : (
@@ -269,12 +297,18 @@ const NovelInfoHeader = ({
         ) : (
           <>
             <NovelSummary
-              summary={novel.summary || getString('novelScreen.noSummary')}
+              summary={novel.summary || ''}
               isExpanded={!novel.inLibrary}
               theme={theme}
+              pluginId={novel.pluginId}
+              novelPath={novel.path}
             />
             {novel.genres ? (
-              <NovelGenres theme={theme} genres={novel.genres} />
+              <NovelGenres
+                theme={theme}
+                genres={novel.genres}
+                pluginId={novel.pluginId}
+              />
             ) : null}
           </>
         )}
@@ -349,5 +383,9 @@ const styles = StyleSheet.create({
   },
   infoRow: {
     marginBottom: 8,
+  },
+  originalNovelTitle: {
+    fontSize: 12,
+    marginTop: -4,
   },
 });

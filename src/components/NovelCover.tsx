@@ -21,6 +21,12 @@ import SourceScreenSkeletonLoading from '@screens/browse/loadingAnimation/Source
 import NovelCoverImage from './NovelCoverImage';
 import { useNovelCoverLayout } from './NovelCoverLayoutContext';
 import MaterialCommunityIcons from '@react-native-vector-icons/material-design-icons';
+import {
+  useTitleMode,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
+import type { MetadataTitleMode } from '@services/translation';
+import { directionStyleFor } from '@utils/textDirection';
 
 interface UnreadBadgeProps {
   showDownloadBadges: boolean;
@@ -64,6 +70,7 @@ interface INovelCover<TNovel> {
   globalSearch?: boolean;
   imageRequestInit?: ImageRequestInit;
   onContinueReading?: () => void;
+  pluginId?: string;
 }
 
 function isFromDB(
@@ -88,6 +95,7 @@ function NovelCover<
   selectedNovelIds,
   imageRequestInit,
   onContinueReading,
+  pluginId,
 }: INovelCover<TNovel>) {
   const selectionActive =
     hasSelection ?? (selectedNovelIds != null && selectedNovelIds.length > 0);
@@ -99,6 +107,13 @@ function NovelCover<
     showDownloadBadges,
     showUnreadBadges,
   } = useNovelCoverLayout();
+
+  // Translated titles are display-only — item.name is never mutated. Callers
+  // that know the plugin may pass pluginId; otherwise it is derived from the
+  // item when the row type carries one (DB rows do, plugin rows do not).
+  const titleMode = useTitleMode();
+  const novelPluginId = pluginId ?? ('pluginId' in item ? item.pluginId : '');
+  const novelPath = item.path;
 
   const selectNovel = () => onLongPress(item);
 
@@ -210,13 +225,21 @@ function NovelCover<
         />
         <View style={styles.compactTitleContainer}>
           {displayMode === DisplayModes.Compact ? (
-            <CompactTitle novelName={item.name} />
+            <CompactTitle
+              novelName={item.name}
+              pluginId={novelPluginId}
+              novelPath={novelPath}
+              titleMode={titleMode}
+            />
           ) : null}
         </View>
         {displayMode === DisplayModes.Comfortable ? (
           <ComfortableTitle
             novelName={item.name}
+            pluginId={novelPluginId}
+            novelPath={novelPath}
             theme={theme}
+            titleMode={titleMode}
             width={coverWidth}
           />
         ) : null}
@@ -258,48 +281,117 @@ function NovelCover<
       onLongPress={selectNovel}
       isSelected={isSelected}
       continueReadingButton={continueReadingButton}
+      pluginId={novelPluginId}
     />
   );
 }
 
 export default memo(NovelCover);
 
+interface TranslatedTitleProps {
+  pluginId: string;
+  novelPath: string;
+  titleMode: MetadataTitleMode;
+}
+
 const ComfortableTitle = ({
   theme,
   novelName,
   width,
+  pluginId,
+  novelPath,
+  titleMode,
 }: {
   theme: ThemeColors;
   novelName: string;
   width?: number;
-}) => (
-  <Text
-    numberOfLines={2}
-    style={[
-      styles.title,
-      styles.padding4,
-      {
-        color: theme.onSurface,
-        maxWidth: width,
-      },
-    ]}
-  >
-    {novelName}
-  </Text>
-);
+} & TranslatedTitleProps) => {
+  // 'original' mode skips translation entirely (undefined text = no request);
+  // every other mode falls back to the original until a translation lands.
+  const translatedName = useTranslatedMetadata(
+    'title',
+    titleMode === 'original' ? undefined : novelName,
+    pluginId,
+    novelPath,
+  );
+  const showOriginalTitle =
+    titleMode === 'both' && translatedName !== undefined;
 
-const CompactTitle = ({ novelName }: { novelName: string }) => (
-  <View style={styles.titleContainer}>
-    <LinearGradient
-      colors={['transparent', 'rgba(0,0,0,0.7)']}
-      style={styles.linearGradient}
-    >
-      <Text numberOfLines={2} style={[styles.title, styles.compactTitle]}>
-        {novelName}
+  return (
+    <>
+      <Text
+        numberOfLines={2}
+        style={[
+          styles.title,
+          styles.padding4,
+          {
+            color: theme.onSurface,
+            maxWidth: width,
+          },
+          directionStyleFor(translatedName ?? novelName),
+        ]}
+      >
+        {translatedName ?? novelName}
       </Text>
-    </LinearGradient>
-  </View>
-);
+      {showOriginalTitle ? (
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.originalTitle,
+            { color: theme.onSurfaceVariant, maxWidth: width },
+            directionStyleFor(novelName),
+          ]}
+        >
+          {novelName}
+        </Text>
+      ) : null}
+    </>
+  );
+};
+
+const CompactTitle = ({
+  novelName,
+  pluginId,
+  novelPath,
+  titleMode,
+}: { novelName: string } & TranslatedTitleProps) => {
+  const translatedName = useTranslatedMetadata(
+    'title',
+    titleMode === 'original' ? undefined : novelName,
+    pluginId,
+    novelPath,
+  );
+  const showOriginalTitle =
+    titleMode === 'both' && translatedName !== undefined;
+
+  return (
+    <View style={styles.titleContainer}>
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.7)']}
+        style={styles.linearGradient}
+      >
+        <Text
+          numberOfLines={2}
+          style={[
+            styles.title,
+            styles.compactTitle,
+            directionStyleFor(translatedName ?? novelName),
+          ]}
+        >
+          {translatedName ?? novelName}
+        </Text>
+        {showOriginalTitle ? (
+          <Text
+            numberOfLines={1}
+            style={[styles.originalCompactTitle, directionStyleFor(novelName)]}
+          >
+            {novelName}
+          </Text>
+        ) : null}
+      </LinearGradient>
+    </View>
+  );
+};
 
 const InLibraryBadge = ({ theme }: { theme: ThemeColors }) => (
   <Text
@@ -397,6 +489,20 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: -1, height: 1 },
     textShadowRadius: 10,
+  },
+  originalCompactTitle: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    paddingHorizontal: 8,
+    paddingBottom: 4,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: -1, height: 1 },
+    textShadowRadius: 10,
+  },
+  originalTitle: {
+    fontSize: 12,
+    marginHorizontal: 12,
+    marginTop: -6,
   },
   compactTitleContainer: {
     bottom: 4,

@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ActivityIndicator, List } from 'react-native-paper';
 import { NavigationProp, useNavigation } from '@react-navigation/native';
 
@@ -11,6 +11,10 @@ import {
   Update,
 } from '@database/types';
 import { useAppSettings, useDownload, useTheme } from '@hooks/persisted';
+import {
+  useTitleMode,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
 import { RootStackParamList } from '@navigators/types';
 import { ThemeColors } from '@theme/types';
 import ChapterItem from './ChapterItem';
@@ -43,6 +47,19 @@ const NovelChapterGroup: React.FC<NovelChapterGroupProps> = ({
     useAppSettings();
   const [isExpanded, setIsExpanded] = useState(false);
   const styles = useMemo(() => createStyles(theme), [theme]);
+
+  // Accordion novel title (display-only — novel.name is never mutated). The
+  // title only renders in the accordion branch, so skip queueing otherwise;
+  // 'original' mode passes undefined text (zero translation overhead).
+  const titleMode = useTitleMode();
+  const translatedTitle = useTranslatedMetadata(
+    'title',
+    titleMode !== 'original' && chapterCount > 1 ? novel.name : undefined,
+    novel.pluginId,
+    novel.path,
+  );
+  const showOriginalTitle =
+    titleMode === 'both' && translatedTitle !== undefined;
 
   const handleAccordionPress = useCallback(() => {
     const nextExpanded = !isExpanded;
@@ -151,7 +168,21 @@ const NovelChapterGroup: React.FC<NovelChapterGroupProps> = ({
   if (chapterCount > 1) {
     return (
       <List.Accordion
-        title={novel.name}
+        title={
+          showOriginalTitle ? (
+            // Paper wraps the title in a Text, so the original title rides
+            // along as a smaller nested line (a second title row is not
+            // possible inside the accordion).
+            <Text>
+              {translatedTitle}
+              {'\n'}
+              <Text style={styles.originalTitle}>{novel.name}</Text>
+            </Text>
+          ) : (
+            translatedTitle ?? novel.name
+          )
+        }
+        titleNumberOfLines={showOriginalTitle ? 2 : 1}
         titleStyle={styles.title}
         left={renderCover}
         descriptionStyle={styles.description}
@@ -218,6 +249,10 @@ function createStyles(theme: ThemeColors) {
     description: { fontSize: 12 },
     loadingIndicator: {
       marginVertical: 16,
+    },
+    originalTitle: {
+      fontSize: 12,
+      color: theme.onSurfaceVariant,
     },
     novelCover: {
       marginEnd: 16,

@@ -10,6 +10,7 @@ import { ThemeColors } from '@theme/types';
 import { getString } from '@i18n/translations';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseGenres } from '../../utils/genres';
+import { useTranslatedMetadata } from '@hooks/useTranslatedMetadata';
 import { directionStyleFor } from '@utils/textDirection';
 
 interface CoverImageProps {
@@ -284,26 +285,46 @@ const genreKeyExtractor = (_item: string, index: number) => 'genre' + index;
 interface NovelGenresProps {
   theme: ThemeColors;
   genres?: string | null;
+  pluginId?: string;
 }
 
-const NovelGenres = memo(({ theme, genres }: NovelGenresProps) => {
-  const data = useMemo(() => parseGenres(genres), [genres]);
-  const renderGenre = useCallback(
-    ({ item }: { item: string }) => <Chip label={item} theme={theme} />,
-    [theme],
-  );
+// Genre chips translate individually so a resolved chip re-renders alone;
+// genres are shared/global metadata (novelPath '') and display-only.
+const GenreChip = ({
+  label,
+  theme,
+  pluginId,
+}: {
+  label: string;
+  theme: ThemeColors;
+  pluginId: string;
+}) => {
+  const translatedLabel = useTranslatedMetadata('genre', label, pluginId, '');
+  return <Chip label={translatedLabel ?? label} theme={theme} />;
+};
 
-  return (
-    <FlatList
-      contentContainerStyle={styles.genreContainer}
-      horizontal
-      data={data}
-      keyExtractor={genreKeyExtractor}
-      renderItem={renderGenre}
-      showsHorizontalScrollIndicator={false}
-    />
-  );
-});
+const NovelGenres = memo(
+  ({ theme, genres, pluginId = '' }: NovelGenresProps) => {
+    const data = useMemo(() => parseGenres(genres), [genres]);
+    const renderGenre = useCallback(
+      ({ item }: { item: string }) => (
+        <GenreChip label={item} theme={theme} pluginId={pluginId} />
+      ),
+      [theme, pluginId],
+    );
+
+    return (
+      <FlatList
+        contentContainerStyle={styles.genreContainer}
+        horizontal
+        data={data}
+        keyExtractor={genreKeyExtractor}
+        renderItem={renderGenre}
+        showsHorizontalScrollIndicator={false}
+      />
+    );
+  },
+);
 
 export {
   NovelInfoContainer,

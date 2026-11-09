@@ -6,6 +6,11 @@ import { ThemeColors } from '@theme/types';
 import { NovelItem } from '@plugins/types';
 import { NovelInfo } from '@database/types';
 import NovelCoverImage from './NovelCoverImage';
+import {
+  useTitleMode,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
+import { directionStyleFor } from '@utils/textDirection';
 
 interface ListViewProps {
   item: NovelItem | NovelInfo;
@@ -17,6 +22,7 @@ interface ListViewProps {
   isSelected?: boolean;
   onLongPress?: () => void;
   continueReadingButton?: React.ReactNode;
+  pluginId?: string;
 }
 
 const ListView = ({
@@ -29,8 +35,23 @@ const ListView = ({
   isSelected,
   onLongPress,
   continueReadingButton,
+  pluginId,
 }: ListViewProps) => {
   const fadedImage = { opacity: inLibraryBadge ? 0.5 : 1 };
+
+  // Translated row title (display-only — item.name is never mutated). Rows
+  // whose type carries a pluginId (DB novels) derive it automatically.
+  const titleMode = useTitleMode();
+  const novelPluginId = pluginId ?? ('pluginId' in item ? item.pluginId : '');
+  const translatedName = useTranslatedMetadata(
+    'title',
+    titleMode === 'original' ? undefined : item.name,
+    novelPluginId,
+    item.path,
+  );
+  const showOriginalTitle =
+    titleMode === 'both' && translatedName !== undefined;
+
   return (
     <Pressable
       android_ripple={{ color: theme.rippleColor }}
@@ -49,12 +70,41 @@ const ListView = ({
         iconSize={20}
         style={[styles.extensionIcon, fadedImage]}
       />
-      <Text
-        style={[{ color: theme.onSurface }, styles.novelName]}
-        numberOfLines={1}
-      >
-        {item.name}
-      </Text>
+      {showOriginalTitle ? (
+        <View style={styles.titleContainer}>
+          <Text
+            style={[
+              { color: theme.onSurface },
+              styles.stackedNovelName,
+              directionStyleFor(translatedName),
+            ]}
+            numberOfLines={1}
+          >
+            {translatedName}
+          </Text>
+          <Text
+            style={[
+              { color: theme.onSurfaceVariant },
+              styles.originalName,
+              directionStyleFor(item.name),
+            ]}
+            numberOfLines={1}
+          >
+            {item.name}
+          </Text>
+        </View>
+      ) : (
+        <Text
+          style={[
+            { color: theme.onSurface },
+            styles.novelName,
+            directionStyleFor(translatedName ?? item.name),
+          ]}
+          numberOfLines={1}
+        >
+          {translatedName ?? item.name}
+        </Text>
+      )}
       <View style={styles.badgeContainer}>
         {downloadBadge}
         {unreadBadge}
@@ -91,5 +141,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginStart: 16,
     paddingEnd: 8,
+  },
+  titleContainer: {
+    flex: 1,
+    marginStart: 16,
+    paddingEnd: 8,
+  },
+  stackedNovelName: {
+    flexWrap: 'wrap',
+    fontSize: 15,
+  },
+  originalName: {
+    fontSize: 12,
+    marginTop: 2,
   },
 });

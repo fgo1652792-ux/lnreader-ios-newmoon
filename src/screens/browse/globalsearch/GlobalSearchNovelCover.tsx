@@ -2,6 +2,11 @@ import { StyleSheet, View, Text, Pressable } from 'react-native';
 import { ThemeColors } from '@theme/types';
 import { NovelItem } from '@plugins/types';
 import { NovelCoverImage } from '@components';
+import {
+  useTitleMode,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
+import { directionStyleFor } from '@utils/textDirection';
 
 interface GlobalSearchNovelCoverProps {
   novel: NovelItem;
@@ -24,6 +29,18 @@ const GlobalSearchNovelCover = ({
 
   const opacity = inLibrary ? 0.5 : 1;
 
+  // Translated title (display-only — novel.name is never mutated). NovelItem
+  // carries no pluginId, so translations use the shared metadata namespace.
+  const titleMode = useTitleMode();
+  const translatedName = useTranslatedMetadata(
+    'title',
+    titleMode === 'original' ? undefined : name,
+    '',
+    novel.path,
+  );
+  const showOriginalTitle =
+    titleMode === 'both' && translatedName !== undefined;
+
   return (
     <View style={styles.container}>
       <Pressable
@@ -40,10 +57,26 @@ const GlobalSearchNovelCover = ({
         />
         <Text
           numberOfLines={2}
-          style={[styles.title, { color: theme.onSurface }]}
+          style={[
+            styles.title,
+            { color: theme.onSurface },
+            directionStyleFor(translatedName ?? name),
+          ]}
         >
-          {name}
+          {translatedName ?? name}
         </Text>
+        {showOriginalTitle ? (
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.originalTitle,
+              { color: theme.onSurfaceVariant },
+              directionStyleFor(name),
+            ]}
+          >
+            {name}
+          </Text>
+        ) : null}
       </Pressable>
     </View>
   );
@@ -74,5 +107,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     padding: 4,
     width: 115,
+  },
+  originalTitle: {
+    fontSize: 12,
+    paddingHorizontal: 4,
   },
 });

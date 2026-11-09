@@ -7,6 +7,11 @@ import dayjs from 'dayjs';
 import { IconButtonV2, NovelCoverImage } from '@components';
 import { getString } from '@i18n/translations';
 import { useTheme } from '@hooks/persisted';
+import {
+  useTitleMode,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
+import { directionStyleFor } from '@utils/textDirection';
 
 import { History } from '@database/types';
 import { HistoryScreenProps } from '@navigators/types';
@@ -19,6 +24,16 @@ interface HistoryCardProps {
 const HistoryCard: React.FC<HistoryCardProps> = ({ history, onRemove }) => {
   const theme = useTheme();
   const { navigate } = useNavigation<HistoryScreenProps['navigation']>();
+
+  // Translated novel name (display-only — history.novelName is never mutated).
+  const titleMode = useTitleMode();
+  const translatedName = useTranslatedMetadata(
+    'title',
+    titleMode === 'original' ? undefined : history.novelName,
+    history.pluginId,
+    history.novelPath,
+  );
+  const showOriginalName = titleMode === 'both' && translatedName !== undefined;
 
   return (
     <View>
@@ -67,10 +82,26 @@ const HistoryCard: React.FC<HistoryCardProps> = ({ history, onRemove }) => {
         <View style={styles.detailsContainer}>
           <Text
             numberOfLines={2}
-            style={[{ color: theme.onSurface }, styles.novelName]}
+            style={[
+              { color: theme.onSurface },
+              styles.novelName,
+              directionStyleFor(translatedName ?? history.novelName),
+            ]}
           >
-            {history.novelName}
+            {translatedName ?? history.novelName}
           </Text>
+          {showOriginalName ? (
+            <Text
+              numberOfLines={1}
+              style={[
+                { color: theme.onSurfaceVariant },
+                styles.originalName,
+                directionStyleFor(history.novelName),
+              ]}
+            >
+              {history.novelName}
+            </Text>
+          ) : null}
           <Text style={{ color: theme.onSurfaceVariant }}>
             {`${getString('historyScreen.chapter')} ${
               history.chapterNumber
@@ -128,6 +159,10 @@ const styles = StyleSheet.create({
     minHeight: 80,
   },
   novelName: {
+    marginBottom: 4,
+  },
+  originalName: {
+    fontSize: 12,
     marginBottom: 4,
   },
 });

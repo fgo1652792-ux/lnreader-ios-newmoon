@@ -3,6 +3,11 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { NovelCoverImage } from '@components';
 import { ThemeColors } from '@theme/types';
+import {
+  useTitleMode,
+  useTranslatedMetadata,
+} from '@hooks/useTranslatedMetadata';
+import { directionStyleFor } from '@utils/textDirection';
 
 interface Props {
   novel: {
@@ -13,9 +18,27 @@ interface Props {
   };
   onPress: () => void;
   theme: ThemeColors;
+  pluginId?: string;
 }
 
-const DiscoverNovelCard: React.FC<Props> = ({ novel, onPress, theme }) => {
+const DiscoverNovelCard: React.FC<Props> = ({
+  novel,
+  onPress,
+  theme,
+  pluginId = '',
+}) => {
+  // Translated card title (display-only — novel.novelName is never mutated).
+  // Tracker cards have no novel path; the pluginId distinguishes AniList/MAL.
+  const titleMode = useTitleMode();
+  const translatedName = useTranslatedMetadata(
+    'title',
+    titleMode === 'original' ? undefined : novel.novelName,
+    pluginId,
+    '',
+  );
+  const showOriginalTitle =
+    titleMode === 'both' && translatedName !== undefined;
+
   return (
     <View style={[styles.container, { backgroundColor: theme.overlay3 }]}>
       <Pressable
@@ -31,11 +54,27 @@ const DiscoverNovelCard: React.FC<Props> = ({ novel, onPress, theme }) => {
         />
         <View style={styles.infoContainer}>
           <Text
-            style={[styles.title, { color: theme.onSurface }]}
+            style={[
+              styles.title,
+              { color: theme.onSurface },
+              directionStyleFor(translatedName ?? novel.novelName),
+            ]}
             numberOfLines={2}
           >
-            {novel.novelName}
+            {translatedName ?? novel.novelName}
           </Text>
+          {showOriginalTitle ? (
+            <Text
+              style={[
+                styles.originalTitle,
+                { color: theme.onSurfaceVariant },
+                directionStyleFor(novel.novelName),
+              ]}
+              numberOfLines={1}
+            >
+              {novel.novelName}
+            </Text>
+          ) : null}
           <Text style={[styles.small, { color: theme.onSurface }]}>
             Score:{' '}
             <Text style={{ color: theme.onSurfaceVariant }}>{novel.score}</Text>
@@ -90,6 +129,10 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
+    marginBottom: 4,
+  },
+  originalTitle: {
+    fontSize: 12,
     marginBottom: 4,
   },
 });
