@@ -13,8 +13,10 @@ import { Appbar, Dialog, List, SafeAreaView } from '@components';
 import { useTheme } from '@hooks/persisted';
 import { getString } from '@i18n/translations';
 import { MoreStackParamList } from '@navigators/types';
+import NativeFile from '@modules/native-file';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Button, IconButton } from 'react-native-paper';
+import * as DocumentPicker from 'expo-document-picker';
 import {
   AI_PROVIDER_KINDS,
   CLOUDFLARE_DEFAULT_ENDPOINT,
@@ -23,26 +25,31 @@ import {
   TRANSLATION_ENGINES,
   TRANSLATION_LANGUAGES,
   TranslationMemory,
+  clampMaxRequests,
   createProvider,
   createSqliteMemoryDriver,
   deleteSecret,
   discoverCloudflareModels,
   discoverProvider,
   generateWithProvider,
+  getUsage,
   keepsTranslations,
   loadPreferences,
   loadProviders,
   parseCloudflareConnection,
   readSecret,
+  resetUsage,
   savePreferences,
   saveProviders,
   saveSecret,
   translateCloudflare,
   validateCloudflareToken,
   type AIProviderConfiguration,
+  type AIProviderKind,
   type CloudflareTranslationConfiguration,
   type TranslationMemoryStats,
   type TranslationPreferences,
+  type TranslationUsageSnapshot,
 } from '@services/translation';
 import type { ThemeColors } from '@theme/types';
 
@@ -58,6 +65,11 @@ const PREFETCH_MINIMUM = 0;
 const PREFETCH_MAXIMUM = 2;
 const GOOGLE_CLOUD_SECRET_KEY = 'google-cloud';
 const CLOUDFLARE_SECRET_KEY = 'cloudflare-workers-ai';
+const IMPORT_MAX_BYTES = 1_048_576; // 1 MB — connection files are small
+const AI_REQUEST_LIMIT_MIN = 1;
+const AI_REQUEST_LIMIT_MAX = 12;
+const BUDGET_LIMIT_STEP = 25;
+const BUDGET_LIMIT_MAX = 1000;
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -65,6 +77,77 @@ const getErrorMessage = (error: unknown): string =>
 const providerKindTitle = (provider: AIProviderConfiguration): string =>
   AI_PROVIDER_KINDS.find(kind => kind.id === provider.kind)?.title ??
   provider.kind;
+
+// ---- v3: file import of provider credentials -----------------------------
+
+type ImportedKind = 'token' | 'cookie' | 'unknown';
+
+interface ImportedCredential {
+  kind: ImportedKind;
+  masked: string;
+  value: string;
+  suggestedKind: AIProviderKind | null;
+}
+
+const maskCredential = (value: string): string => {
+  const trimmed = value.trim();
+  if (trimmed.length <= 10) return '••••••';
+  return `${trimmed.slice(0, 6)}…${trimmed.slice(-4)}`;
+};
+
+const detectCredentialKind = (value: string): ImportedCredential => {
+  const text = value.trim();
+  const masked = maskCredential(text);
+  // ChatGPT access token (JWT).
+  if (/^ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\./.test(text)) {
+    return { kind: 'token', masked, value: text, suggestedKind: 'chatGPTAccount' };
+  }
+  // Gemini API key.
+  if (/^AIza[\w-]{10,}$/.test(text)) {
+    return { kind: 'token', masked, value: text, suggestedKind: 'geminiAPI' };
+  }
+  // OpenAI-compatible bearer key.
+  if (/^sk-[\w-]{8,}$/.test(text)) {
+    return { kind: 'token', masked, value: text, suggestedKind: 'openAICompatible' };
+  }
+  // Cookie header: several key=value pairs separated by ';' with no whitespace.
+  if (
+    text.length >= 40 &&
+    !/\s/.test(text) &&
+    text.includes('=') &&
+    text.includes(';')
+  ) {
+    return { kind: 'cookie', masked, value: text, suggestedKind: 'geminiAccount' };
+  }
+  return { kind: 'unknown', masked, value: text, suggestedKind: null };
+};
+
+// Accepts a raw token/cookie OR a documented JSON wrapper
+// { "kind": "chatgpt"|"gemini", "token": "…" , "cookie": "…" }.
+const detectCredential = (raw: string): ImportedCredential => {
+  const text = String(raw ?? '').trim();
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const cookie = typeof parsed.cookie === 'string' ? parsed.cookie : '';
+      const token = typeof parsed.token === 'string' ? parsed.token : '';
+      const chosen = (cookie || token).trim();
+      if (chosen.length > 0) return detectCredentialKind(chosen);
+    } catch {
+      // Not JSON — fall through to raw detection.
+    }
+  }
+  return detectCredentialKind(text);
+};
+
+const importedKindLabel = (kind: ImportedKind): string =>
+  getString(
+    kind === 'token'
+      ? 'translationScreen.importKindToken'
+      : kind === 'cookie'
+        ? 'translationScreen.importKindCookie'
+        : 'translationScreen.importKindUnknown',
+  );
 
 interface ProviderEditorDialogProps {
   provider: AIProviderConfiguration;
@@ -76,6 +159,7 @@ interface ProviderEditorDialogProps {
   onSecretChange: (value: string) => void;
   onDiscover: () => void;
   onTest: () => void;
+  onImportFile: () => void;
   onSelect: () => void;
   onDelete: () => void;
   onSave: () => void;
@@ -92,6 +176,7 @@ const ProviderEditorDialog = ({
   onSecretChange,
   onDiscover,
   onTest,
+  onImportFile,
   onSelect,
   onDelete,
   onSave,
@@ -169,6 +254,15 @@ const ProviderEditorDialog = ({
             {getString('translationScreen.savedBadge')}
           </Text>
         )}
+        <Button
+          mode="text"
+          icon="file-import-outline"
+          onPress={onImportFile}
+          disabled={busy}
+          style={styles.importButton}
+        >
+          {getString('translationScreen.importFile')}
+        </Button>
         <Text style={[styles.label, { color: theme.onSurfaceVariant }]}>
           {getString('translationScreen.providerInstruction')}
         </Text>
@@ -282,6 +376,13 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
   const [customInstruction, setCustomInstruction] = useState(
     () => prefs.customInstruction,
   );
+
+  // v3: usage budget + credential file import
+  const [usage, setUsage] = useState<TranslationUsageSnapshot | null>(
+    () => getUsage(),
+  );
+  const [importedCredential, setImportedCredential] =
+    useState<ImportedCredential | null>(null);
 
   const [memoryStats, setMemoryStats] = useState<TranslationMemoryStats | null>(
     null,
@@ -411,6 +512,7 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
     const savedSecret = editorSecret.trim();
     if (savedSecret.length > 0) await saveSecret(draft.id, savedSecret);
     update({ providerID: draft.id });
+    setEditorSecret('');
     setEditorProvider(null);
   };
 
@@ -571,6 +673,102 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
     } catch (error) {
       showError(error);
     }
+  };
+
+  // ---- v3: credential file import -------------------------------------------
+
+  const importProviderFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        type: ['text/*', 'application/json'],
+      });
+      const asset = result.assets?.[0];
+      if (!asset) return; // user cancelled the picker
+      if ((asset.size ?? 0) > IMPORT_MAX_BYTES) {
+        Alert.alert(
+          getString('translationScreen.importFileTitle'),
+          getString('translationScreen.importTooLarge'),
+        );
+        return;
+      }
+      // Read locally, then delete the cache copy immediately — the file is
+      // never uploaded anywhere and never logged.
+      const tempPath = `${NativeFile.ExternalCachesDirectoryPath}/moon-cred-import.txt`;
+      await NativeFile.copyFile(asset.uri, tempPath);
+      const content = await NativeFile.readFile(tempPath);
+      await NativeFile.unlink(tempPath);
+      const detected = detectCredential(String(content ?? ''));
+      if (
+        detected.kind === 'unknown' ||
+        detected.value.length < 16 ||
+        /[\r\n]/.test(detected.value)
+      ) {
+        Alert.alert(
+          getString('translationScreen.importFileTitle'),
+          getString('translationScreen.importInvalid'),
+        );
+        return;
+      }
+      setImportedCredential(detected);
+    } catch (error) {
+      showError(error);
+    }
+  };
+
+  const discardImportedCredential = useCallback(() => {
+    // Drop the secret from memory as soon as the dialog closes.
+    setImportedCredential(null);
+  }, []);
+
+  const testImportedConnection = async () => {
+    if (!importedCredential || !editorProvider) return;
+    setBusy(true);
+    try {
+      const response = await generateWithProvider(
+        TEST_CONNECTION_PROMPT,
+        editorProvider,
+        importedCredential.value,
+      );
+      const trimmed = response.trim();
+      Alert.alert(
+        getString('translationScreen.testConnection'),
+        trimmed === 'OK'
+          ? getString('translationScreen.testOk')
+          : `${getString('translationScreen.testUnexpected')}: ${trimmed}`,
+      );
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmImportSave = async () => {
+    if (!importedCredential || !editorProvider) return;
+    setBusy(true);
+    try {
+      // Straight into the iOS Keychain — never MMKV, never logs.
+      await saveSecret(editorProvider.id, importedCredential.value);
+      setEditorSecret('');
+      setEditorHasSecret(true);
+      setImportedCredential(null);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetUsageCounters = () => {
+    confirmRemoval(getString('translationScreen.budgetResetMessage'), () => {
+      resetUsage();
+      setUsage(getUsage());
+      Alert.alert(
+        getString('translationScreen.budgetHeader'),
+        getString('translationScreen.budgetResetDone'),
+      );
+    });
   };
 
   const addGlossaryEntry = () => {
@@ -840,6 +1038,66 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
             </Text>
           )}
 
+          {prefs.engine === 'ai' && (
+            <>
+              <List.SubHeader theme={theme}>
+                {getString('translationScreen.aiPolicyHeader')}
+              </List.SubHeader>
+              <View style={styles.stepperRow}>
+                <View style={styles.stepperText}>
+                  <Text style={[styles.itemTitle, { color: theme.onSurface }]}>
+                    {getString('translationScreen.aiMaxRequests')}
+                  </Text>
+                  <Text
+                    style={[styles.itemDesc, { color: theme.onSurfaceVariant }]}
+                  >
+                    {getString('translationScreen.aiMaxRequestsDesc')}
+                  </Text>
+                </View>
+                <IconButton
+                  icon="minus"
+                  onPress={() =>
+                    update({
+                      aiMaxRequestsPerChapter: Math.max(
+                        AI_REQUEST_LIMIT_MIN,
+                        clampMaxRequests(prefs.aiMaxRequestsPerChapter) - 1,
+                      ),
+                    })
+                  }
+                  disabled={
+                    clampMaxRequests(prefs.aiMaxRequestsPerChapter) <=
+                    AI_REQUEST_LIMIT_MIN
+                  }
+                />
+                <Text style={[styles.stepperValue, { color: theme.onSurface }]}>
+                  {clampMaxRequests(prefs.aiMaxRequestsPerChapter)}
+                </Text>
+                <IconButton
+                  icon="plus"
+                  onPress={() =>
+                    update({
+                      aiMaxRequestsPerChapter: Math.min(
+                        AI_REQUEST_LIMIT_MAX,
+                        clampMaxRequests(prefs.aiMaxRequestsPerChapter) + 1,
+                      ),
+                    })
+                  }
+                  disabled={
+                    clampMaxRequests(prefs.aiMaxRequestsPerChapter) >=
+                    AI_REQUEST_LIMIT_MAX
+                  }
+                />
+              </View>
+              <SettingSwitch
+                label={getString('translationScreen.aiStreaming')}
+                description={getString('translationScreen.aiStreamingDesc')}
+                value={prefs.aiStreaming}
+                onPress={() => update({ aiStreaming: !prefs.aiStreaming })}
+                theme={theme}
+              />
+            </>
+          )}
+
           <List.SubHeader theme={theme}>
             {getString('translationScreen.behaviorHeader')}
           </List.SubHeader>
@@ -848,13 +1106,6 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
             description={getString('translationScreen.suggestDesc')}
             value={prefs.suggest}
             onPress={() => update({ suggest: !prefs.suggest })}
-            theme={theme}
-          />
-          <SettingSwitch
-            label={getString('translationScreen.automatic')}
-            description={getString('translationScreen.automaticDesc')}
-            value={prefs.automatic}
-            onPress={() => update({ automatic: !prefs.automatic })}
             theme={theme}
           />
           <SettingSwitch
@@ -870,15 +1121,6 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
             value={keepsTranslations(prefs)}
             onPress={() =>
               update({ retainTranslations: !keepsTranslations(prefs) })
-            }
-            theme={theme}
-          />
-          <SettingSwitch
-            label={getString('translationScreen.readerAutomatic')}
-            description={getString('translationScreen.readerAutomaticDesc')}
-            value={prefs.readerAutomatic}
-            onPress={() =>
-              update({ readerAutomatic: !prefs.readerAutomatic })
             }
             theme={theme}
           />
@@ -921,6 +1163,69 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
               disabled={prefs.prefetchNextChapters >= PREFETCH_MAXIMUM}
             />
           </View>
+
+          <List.SubHeader theme={theme}>
+            {getString('translationScreen.autoHeader')}
+          </List.SubHeader>
+          <SettingSwitch
+            label={getString('translationScreen.autoMaster')}
+            description={getString('translationScreen.autoMasterDesc')}
+            value={prefs.autoTranslate}
+            onPress={() => update({ autoTranslate: !prefs.autoTranslate })}
+            theme={theme}
+          />
+          <SettingSwitch
+            label={getString('translationScreen.autoScopeMetadata')}
+            description={getString('translationScreen.autoScopeMetadataDesc')}
+            value={prefs.autoScopeMetadata}
+            onPress={() =>
+              update({ autoScopeMetadata: !prefs.autoScopeMetadata })
+            }
+            theme={theme}
+          />
+          <SettingSwitch
+            label={getString('translationScreen.autoScopeReader')}
+            description={getString('translationScreen.autoScopeReaderDesc')}
+            value={prefs.autoScopeReader}
+            onPress={() => update({ autoScopeReader: !prefs.autoScopeReader })}
+            theme={theme}
+          />
+          <SettingSwitch
+            label={getString('translationScreen.autoScopeBrowser')}
+            description={getString('translationScreen.autoScopeBrowserDesc')}
+            value={prefs.autoScopeBrowser}
+            onPress={() => update({ autoScopeBrowser: !prefs.autoScopeBrowser })}
+            theme={theme}
+          />
+
+          <List.SubHeader theme={theme}>
+            {getString('translationScreen.metadataHeader')}
+          </List.SubHeader>
+          <List.Item
+            title={getString('translationScreen.titleModeArabic')}
+            right={prefs.metadataTitleMode === 'arabic' ? 'check' : undefined}
+            onPress={() => update({ metadataTitleMode: 'arabic' })}
+            theme={theme}
+          />
+          <List.Item
+            title={getString('translationScreen.titleModeOriginal')}
+            right={prefs.metadataTitleMode === 'original' ? 'check' : undefined}
+            onPress={() => update({ metadataTitleMode: 'original' })}
+            theme={theme}
+          />
+          <List.Item
+            title={getString('translationScreen.titleModeBoth')}
+            right={prefs.metadataTitleMode === 'both' ? 'check' : undefined}
+            onPress={() => update({ metadataTitleMode: 'both' })}
+            theme={theme}
+          />
+          <SettingSwitch
+            label={getString('translationScreen.chapterTitles')}
+            description={getString('translationScreen.chapterTitlesDesc')}
+            value={prefs.chapterTitles}
+            onPress={() => update({ chapterTitles: !prefs.chapterTitles })}
+            theme={theme}
+          />
 
           <List.SubHeader theme={theme}>
             {getString('translationScreen.glossary')}
@@ -1074,6 +1379,73 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
             }
             theme={theme}
           />
+          <List.SubHeader theme={theme}>
+            {getString('translationScreen.budgetHeader')}
+          </List.SubHeader>
+          <List.Item
+            title={getString('translationScreen.budgetRequests')}
+            description={
+              usage
+                ? `${usage.requests} · ${getString('translationScreen.budgetToday')}: ${usage.requestsToday}`
+                : '—'
+            }
+            theme={theme}
+          />
+          {usage?.hasTokenData ? (
+            <List.Item
+              title={getString('translationScreen.budgetTokens')}
+              description={`${usage.promptTokens} → ${usage.completionTokens}`}
+              theme={theme}
+            />
+          ) : (
+            <Text style={[styles.caption, { color: theme.onSurfaceVariant }]}>
+              {getString('translationScreen.budgetTokensHint')}
+            </Text>
+          )}
+          <View style={styles.stepperRow}>
+            <View style={styles.stepperText}>
+              <Text style={[styles.itemTitle, { color: theme.onSurface }]}>
+                {getString('translationScreen.budgetLimit')}
+              </Text>
+              <Text style={[styles.itemDesc, { color: theme.onSurfaceVariant }]}>
+                {(prefs.aiDailyRequestLimit ?? 0) <= 0
+                  ? getString('translationScreen.budgetLimitOff')
+                  : `${prefs.aiDailyRequestLimit}`}
+              </Text>
+            </View>
+            <IconButton
+              icon="minus"
+              onPress={() =>
+                update({
+                  aiDailyRequestLimit: Math.max(
+                    0,
+                    (prefs.aiDailyRequestLimit ?? 0) - BUDGET_LIMIT_STEP,
+                  ),
+                })
+              }
+              disabled={(prefs.aiDailyRequestLimit ?? 0) <= 0}
+            />
+            <IconButton
+              icon="plus"
+              onPress={() =>
+                update({
+                  aiDailyRequestLimit: Math.min(
+                    BUDGET_LIMIT_MAX,
+                    (prefs.aiDailyRequestLimit ?? 0) + BUDGET_LIMIT_STEP,
+                  ),
+                })
+              }
+              disabled={
+                (prefs.aiDailyRequestLimit ?? 0) >= BUDGET_LIMIT_MAX
+              }
+            />
+          </View>
+          <List.Item
+            title={getString('translationScreen.budgetReset')}
+            icon="restart"
+            onPress={resetUsageCounters}
+            theme={theme}
+          />
         </List.Section>
       </ScrollView>
 
@@ -1170,6 +1542,63 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
         </Dialog.Actions>
       </Dialog.Root>
 
+      <Dialog.Root
+        visible={importedCredential !== null}
+        onDismiss={discardImportedCredential}
+      >
+        <Dialog.Header>
+          <Dialog.Title>
+            {getString('translationScreen.importFileTitle')}
+          </Dialog.Title>
+        </Dialog.Header>
+        <Dialog.Content>
+          <Text style={[styles.label, { color: theme.onSurfaceVariant }]}>
+            {getString('translationScreen.importDetected')}
+          </Text>
+          <Text style={[styles.input, { color: theme.onSurface }]}>
+            {importedCredential ? importedKindLabel(importedCredential.kind) : ''}
+          </Text>
+          <Text style={[styles.label, { color: theme.onSurfaceVariant }]}>
+            {getString('translationScreen.importExpected')}
+          </Text>
+          <Text style={[styles.input, { color: theme.onSurface }]}>
+            {importedCredential?.suggestedKind
+              ? (AI_PROVIDER_KINDS.find(
+                  kind => kind.id === importedCredential.suggestedKind,
+                )?.title ?? '')
+              : editorProvider
+                ? providerKindTitle(editorProvider)
+                : ''}
+          </Text>
+          <Text style={[styles.label, { color: theme.onSurfaceVariant }]}>
+            {getString('translationScreen.importMasked')}
+          </Text>
+          <Text style={[styles.input, { color: theme.onSurface }]}>
+            {importedCredential?.masked ?? ''}
+          </Text>
+          <Text style={[styles.caption, { color: theme.onSurfaceVariant }]}>
+            {getString('translationScreen.importSecurityNote')}
+          </Text>
+          <Text style={[styles.caption, { color: theme.onSurfaceVariant }]}>
+            {getString('translationScreen.importWebWarning')}
+          </Text>
+        </Dialog.Content>
+        <Dialog.Actions>
+          <Dialog.Action
+            title={getString('translationScreen.cancelAction')}
+            onPress={discardImportedCredential}
+          />
+          <Dialog.Action
+            title={getString('translationScreen.importTest')}
+            onPress={() => void testImportedConnection()}
+          />
+          <Dialog.Action
+            title={getString('translationScreen.importSaveSecure')}
+            onPress={() => void confirmImportSave()}
+          />
+        </Dialog.Actions>
+      </Dialog.Root>
+
       {editorProvider && (
         <ProviderEditorDialog
           provider={editorProvider}
@@ -1185,10 +1614,15 @@ const SettingsTranslation = ({ navigation }: TranslationSettingsProps) => {
           onSecretChange={setEditorSecret}
           onDiscover={() => void discoverEditorModels()}
           onTest={() => void testEditorConnection()}
+          onImportFile={() => void importProviderFile()}
           onSelect={selectEditorProvider}
           onDelete={deleteEditorProvider}
           onSave={() => void saveEditor()}
-          onClose={() => setEditorProvider(null)}
+          onClose={() => {
+            setEditorSecret('');
+            setImportedCredential(null);
+            setEditorProvider(null);
+          }}
         />
       )}
     </SafeAreaView>
@@ -1234,6 +1668,10 @@ const styles = StyleSheet.create({
   },
   grow: {
     flex: 1,
+  },
+  importButton: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
   },
   pickerScroll: {
     maxHeight: 288,
